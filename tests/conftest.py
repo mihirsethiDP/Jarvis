@@ -18,7 +18,9 @@ class FakeIO:
 
     def ask(self, prompt: str) -> str:
         self.asked.append(prompt)
-        return self.answers.pop(0) if self.answers else ""
+        if not self.answers:
+            raise EOFError  # mirrors a closed console (TextIO propagates it)
+        return self.answers.pop(0)
 
 
 @pytest.fixture

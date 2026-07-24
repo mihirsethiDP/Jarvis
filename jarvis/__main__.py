@@ -3,6 +3,7 @@
     jarvis                     start the assistant (voice if available)
     jarvis --text              start in console chat mode
     jarvis --ui                also serve the local status orb page
+    jarvis setup               first-run consent wizard (what may Jarvis access?)
     jarvis setup-google        run the Google authorization flow now
     jarvis secrets set NAME    store a secret in the Windows keyring
     jarvis permissions list    show persistent grants
@@ -47,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--ui", action="store_true", default=argparse.SUPPRESS,
                        help="Serve the local status page")
 
+    sub.add_parser("setup", help="First-run consent wizard: choose what Jarvis may access")
     sub.add_parser("setup-google", help="Authorize Google Drive/Gmail access now")
 
     sec = sub.add_parser("secrets", help="Manage secrets in the Windows keyring")
@@ -70,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
         app = JarvisApp(config, force_text=getattr(args, "text", False),
                         with_ui=getattr(args, "ui", False))
         app.run()
+        return 0
+
+    if args.cmd == "setup":
+        from .setup_wizard import run_setup
+
+        run_setup(config)
         return 0
 
     if args.cmd == "setup-google":

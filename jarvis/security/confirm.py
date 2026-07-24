@@ -13,7 +13,11 @@ from ..io_channel import IOChannel
 from .audit import AuditLog
 from .permissions import normalize_answer
 
-_YES = {"yes", "confirm", "confirmed", "do it", "go ahead", "send it", "yep", "yeah", "ok", "okay"}
+_YES = {"yes", "confirm", "confirmed", "do it", "go ahead", "send it", "yep", "yeah", "ok", "okay",
+        # Hindi / Hinglish — kept deliberately narrow: this is the consent gate,
+        # so only unambiguous affirmatives belong here.
+        "haan", "haanji", "ji haan", "theek hai", "thik hai", "kar do", "bhej do",
+        "हाँ", "हां", "जी हाँ", "ठीक है", "कर दो", "भेज दो"}
 
 
 class Confirmer:
@@ -35,9 +39,12 @@ class Confirmer:
                               decision="skipped_disabled", ok=True)
             return True
 
-        answer = normalize_answer(self.io.ask(
-            f"Please confirm — {summary} Say yes to proceed, or no to cancel."
-        ))
+        try:
+            answer = normalize_answer(self.io.ask(
+                f"Please confirm — {summary} Say yes to proceed, or no to cancel."
+            ))
+        except EOFError:
+            answer = ""  # input channel closed — treat as cancelled
         confirmed = answer in _YES
         self.audit.record(
             "confirmation",

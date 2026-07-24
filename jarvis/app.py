@@ -8,9 +8,20 @@ import sys
 from .brain import JarvisAgent
 from .config import Config
 from .io_channel import IOChannel, TextIO, VoiceIO
+from .paths import cli_hint
 from .security import AuditLog, Confirmer, PermissionManager
 from .security import secrets as secret_store
 from .tools import ToolContext, build_all_tools
+
+
+def _headless_error(message: str) -> None:
+    """Surface a fatal startup problem when there is no console (pythonw)."""
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Jarvis failed to start", 0x10)
+    except Exception:
+        pass
 
 _EXIT_PHRASES = {"shut down", "shutdown", "exit", "quit", "stop listening", "goodbye jarvis"}
 
@@ -106,11 +117,25 @@ class JarvisApp:
             stt = Transcriber(
                 model_size=str(cfg.get("audio.stt.model_size", "base.en")),
                 compute_type=str(cfg.get("audio.stt.compute_type", "int8")),
+                language=str(cfg.get("audio.stt.language", "en")),
             )
-            speaker = Speaker(
+            offline_speaker = Speaker(
                 voice=cfg.get("audio.tts.voice"),
                 rate=int(cfg.get("audio.tts.rate", 180)),
             )
+            engine = str(cfg.get("audio.tts.engine", "pyttsx3"))
+            if engine not in ("pyttsx3", "edge"):
+                print(f"Unknown audio.tts.engine '{engine}' — using pyttsx3.")
+            if engine == "edge":
+                from .audio.tts_edge import EdgeSpeaker
+
+                speaker = EdgeSpeaker(
+                    voice_en=str(cfg.get("audio.tts.edge_voice_en", "en-IN-NeerjaNeural")),
+                    voice_hi=str(cfg.get("audio.tts.edge_voice_hi", "hi-IN-SwaraNeural")),
+                    fallback=offline_speaker,
+                )
+            else:
+                speaker = offline_speaker
             return {"mic": mic, "wake": wake, "recorder": recorder,
                     "stt": stt, "speaker": speaker}
         except Exception as e:
@@ -138,11 +163,24 @@ class JarvisApp:
     # ------------------------------------------------------------------
     def run(self) -> None:
         if not bootstrap_api_key():
-            print(
+            message = (
                 "No Claude API key found. Set the ANTHROPIC_API_KEY environment "
-                "variable, or store it securely with:  jarvis secrets set anthropic"
+                f"variable, or store it securely with:  {cli_hint('secrets set anthropic')}"
             )
+            self.audit.record("startup", detail="no API key", decision="failed", ok=False)
+            if sys.stdin is None:
+                _headless_error(message)  # autostart must not die invisibly
+            else:
+                print(message)
             return
+        from .setup_wizard import setup_marker_exists
+
+        if not setup_marker_exists():
+            print(
+                "Tip: you haven't run the consent wizard yet — it lets you choose "
+                f"exactly what Jarvis may access:  {cli_hint('setup')}\n"
+                "Until then, Jarvis asks at first use of each capability."
+            )
         self.audit.record("startup", detail="voice" if self.voice else "text")
         if self.voice is not None:
             self._run_voice()
@@ -155,18 +193,10 @@ class JarvisApp:
             # there is no console to fall back to. Fail loudly, not silently.
             self.audit.record("startup", detail="voice unavailable and no console",
                               decision="failed", ok=False)
-            try:
-                import ctypes
-
-                ctypes.windll.user32.MessageBoxW(
-                    None,
-                    "Jarvis could not start voice mode and has no console for text "
-                    "mode. Run 'jarvis --text' from a terminal to diagnose.",
-                    "Jarvis failed to start",
-                    0x10,  # MB_ICONERROR
-                )
-            except Exception:
-                pass
+            _headless_error(
+                "Jarvis could not start voice mode and has no console for text "
+                f"mode. Run  {cli_hint('--text')}  from a terminal to diagnose."
+            )
             return
         name = self.config.get("assistant.name", "Jarvis")
         print(f"\n{name} (text mode) — type your request, or 'exit' to quit.")

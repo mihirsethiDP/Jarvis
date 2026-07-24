@@ -29,6 +29,8 @@ voice = [
     "silero-vad>=5.1",
     "numpy>=1.24,<3",
     "pyttsx3>=2.90",
+    "edge-tts>=7.0",     # neural Hindi/Hinglish voices (cloud — see SECURITY.md)
+    "miniaudio>=1.59",   # mp3 decode for edge-tts playback
 ]
 ui = [
     "fastapi>=0.110",

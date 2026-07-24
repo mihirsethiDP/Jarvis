@@ -24,14 +24,22 @@ audio:
     threshold: 0.5
   stt:
     engine: faster-whisper  # faster-whisper (offline) | google (online)
-    model_size: base.en     # tiny.en | base.en | small.en ...
+    model_size: base.en     # tiny.en | base.en | small.en ... (use "small" for Hindi)
     compute_type: int8
+    # "en" | "hi" | ... | "auto" (detect per utterance — best for Hinglish).
+    # Anything but "en" auto-upgrades a ".en" model to its multilingual twin.
+    language: en
     max_seconds: 20         # hard cap on a single utterance
     silence_seconds: 1.2    # end of speech after this much silence
   tts:
-    engine: pyttsx3         # pyttsx3 (offline, Windows SAPI)
-    voice: null             # substring of an installed SAPI voice name
+    # pyttsx3: offline Windows SAPI voices (private, robotic).
+    # edge: Microsoft neural voices incl. Hindi/Hinglish — natural, but CLOUD:
+    #       spoken replies are sent to Microsoft for synthesis (see SECURITY.md).
+    engine: pyttsx3         # pyttsx3 | edge
+    voice: null             # pyttsx3: substring of an installed SAPI voice name
     rate: 180
+    edge_voice_en: en-IN-NeerjaNeural   # used for English/Hinglish replies
+    edge_voice_hi: hi-IN-SwaraNeural    # used when the reply is in Devanagari
 
 google:
   # Path to the OAuth client secrets JSON for the company's *internal* Google
@@ -61,6 +69,33 @@ files:
 #     model: gpt-4o
 #     api_key_env: COMPANY_GPT_API_KEY
 ai_tools: []
+
+# Company-internal tools Jarvis may read context from / act on — AS THE
+# SIGNED-IN EMPLOYEE. Each employee connects with their own token
+# (`jarvis secrets set tool-<name>-token`); the tool's server-side permissions
+# decide what that account can access. Jarvis never gets database credentials.
+# Example:
+#   - name: plantops
+#     description: the PlantOps dashboard
+#     base_url: https://plantops.internal.digitalpaani.com/api
+#     auth: bearer                # bearer (per-user token) | none
+#     actions:
+#       - name: search_tickets
+#         kind: read              # read | write (write = confirmed per action)
+#         method: GET
+#         path: /tickets
+#         description: search maintenance tickets by text
+#         params:
+#           query: {type: string, in: query, description: search text}
+#       - name: create_ticket
+#         kind: write
+#         method: POST
+#         path: /tickets
+#         description: open a new maintenance ticket
+#         params:
+#           title:    {type: string, in: body, description: short ticket title}
+#           plant_id: {type: string, in: body, description: plant identifier}
+internal_tools: []
 
 security:
   # Note: side-effect confirmation (spoken summary + explicit "yes") is always

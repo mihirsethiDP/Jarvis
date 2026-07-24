@@ -3,7 +3,20 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+
+def cli_hint(subcommand: str) -> str:
+    """A copy-pasteable command for this install — `jarvis` is not on PATH.
+
+    Under the pythonw autostart, sys.executable is the console-less
+    interpreter; swap it for python.exe so interactive commands work.
+    """
+    exe = sys.executable or "python"
+    if exe.lower().endswith("pythonw.exe"):
+        exe = exe[: -len("pythonw.exe")] + "python.exe"
+    return f'"{exe}" -m jarvis {subcommand}'
 
 
 def app_data_dir() -> Path:

@@ -17,7 +17,41 @@ layer), not by trusting the model.**
 4. **Everything is evidence.** Every decision and action lands in a
    tamper-evident local audit log.
 
+## Identity & access model — one employee's Jarvis is one employee
+
+**Jarvis never holds database credentials or shared service accounts.**
+Every integration acts with the *individual employee's own identity*:
+
+- **Google**: per-user OAuth in the employee's browser; the token lives
+  DPAPI-encrypted in *their* Windows profile.
+- **Internal company tools**: Jarvis calls the tool's HTTP API with a
+  personal token (`jarvis secrets set tool-<name>-token`). Authorization is
+  enforced **server-side by the tool itself** — if the employee's account
+  can't see a record, the API returns 403 and Jarvis relays that. The model
+  is explicitly instructed to relay denials, but the guarantee does not
+  depend on the model behaving: the desktop app simply has no credential
+  that could exceed the employee's own access level.
+- **Local state** (grants, audit log, tokens) is stored per Windows user
+  profile; DPAPI blobs are undecryptable by other users on the same machine.
+
+Consequences: employee A's Jarvis cannot read employee B's data because it
+authenticates *as A* everywhere, and no component of Jarvis aggregates data
+across users. There is deliberately no "Jarvis service account".
+
+> **Never** wire Jarvis (or any LLM) directly to a database or a shared
+> admin API key — that collapses every user's access level into one and
+> makes the model the only line of defense. The API-with-user-identity
+> pattern above is the load-bearing design decision.
+
 ## Layers
+
+### 0. Install-time consent (`jarvis setup`)
+
+At install, the employee decides per capability: **allow / ask at first use /
+deny**. A denial is standing: the corresponding tools are **removed from the
+model's toolset entirely** (the model cannot even attempt them) and Jarvis
+never nags. Decisions are re-editable anytime via `jarvis setup` or
+`jarvis permissions`.
 
 ### 1. Capability grants (`jarvis/security/permissions.py`)
 
@@ -29,11 +63,14 @@ Coarse, human-meaningful capabilities gate each tool family:
 | `drive_read` / `drive_write` | Drive search+read / create+upload |
 | `email_send` | Gmail send |
 | `ai:<name>` | each configured external AI tool, individually |
+| `tool:<name>:read` / `tool:<name>:write` | each internal tool, read and write separately |
 
 First use prompts the user: **allow once / allow for this session / always
 allow / deny**. Session grants expire (default 8 h). "Always" grants persist
 in `%APPDATA%\Jarvis\permissions.json` — reviewable with
 `jarvis permissions list`, revocable with `jarvis permissions revoke`.
+Consent answers are understood in English, Hindi, and Hinglish; anything
+unrecognized fails closed.
 
 ### 2. Side-effect confirmation (`jarvis/security/confirm.py`)
 
@@ -126,6 +163,10 @@ and should be stated honestly in any internal security review.
   document excerpts the model reads) goes to Anthropic under the company's
   API agreement. Wake word and STT are local; nothing is streamed until the
   wake word fires.
+- **edge-tts is a cloud dependency when enabled** (`audio.tts.engine: edge`,
+  chosen for natural Hindi/Hinglish voices): every reply Jarvis speaks is
+  sent to Microsoft for synthesis. Replies can quote company documents.
+  The offline SAPI engine remains the default and the automatic fallback.
 - **Transcription errors**: STT may mishear a "yes". The confirmation prompt
   includes the payload summary precisely so a mistaken yes is still an
   informed one.

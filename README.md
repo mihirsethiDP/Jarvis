@@ -40,7 +40,9 @@ configured AI tools).
 
 | Layer | What it does |
 |---|---|
-| **Capability grants** | First use of Drive / Gmail / files / each AI tool asks the user: allow once, for this session, or always. Unrecognized answers **fail closed**. Grants are reviewable and revocable. |
+| **Install-time consent** | `jarvis setup` asks the employee, per capability: allow / ask at first use / **deny**. Denied tools are removed from the model's toolset entirely and never asked about again. |
+| **Capability grants** | First use of Drive / Gmail / files / each AI & internal tool asks the user: allow once, for this session, or always. Answers understood in English/Hindi/Hinglish; unrecognized answers **fail closed**. Grants are reviewable and revocable. |
+| **Per-user identity** | Every integration authenticates as the individual employee (their OAuth token, their internal-tool token). Access levels are enforced **server-side** by each tool — one employee's Jarvis can never see another employee's data, and there is no shared service account to abuse. |
 | **Confirmation** | Every side effect (send email, write/upload file) reads a concrete summary aloud and requires an explicit *yes* — even with an "always" grant. |
 | **Audit log** | Every tool call, permission decision, and confirmation is appended to a SHA-256 hash-chained JSONL log. `jarvis audit --verify` detects tampering. |
 | **Path allowlist** | Local file access is confined to configured directories; traversal and symlink escapes are resolved before checking. |
@@ -87,8 +89,27 @@ Default scopes are least-privilege: `drive.file` + `drive.readonly` +
 ### External AI tools
 
 List approved tools under `ai_tools:` in the config (OpenAI-compatible or
-Anthropic-style endpoints). Jarvis can only reach tools on that list, and the
-user must still grant `ai:<name>` at runtime.
+Anthropic-style endpoints). Jarvis can only reach tools on that list, the
+user must grant `ai:<name>`, and every forwarded prompt is confirmed aloud.
+
+### Internal company tools
+
+Declare each internal tool's API under `internal_tools:` in the config — name,
+base URL, and a whitelist of actions (read or write) with their parameters.
+Employees connect with a **personal** token (`jarvis secrets set
+tool-<name>-token`); Jarvis calls the API as that employee, so the tool's own
+server-side permissions bound what Jarvis can do. Write actions are confirmed
+aloud per action. Jarvis never receives database credentials — see
+[docs/SECURITY.md](docs/SECURITY.md) for why that's the load-bearing decision.
+
+### Hindi / Hinglish
+
+Two config keys enable it: `audio.stt.language: auto` (or `hi`) for
+understanding, and `audio.tts.engine: edge` for natural Hindi/Indian-English
+neural voices (`hi-IN-SwaraNeural` / `en-IN-NeerjaNeural`). Consent and
+confirmation answers ("haan", "नहीं", "theek hai"…) are understood either way.
+Note: edge-tts synthesizes in Microsoft's cloud — the offline SAPI voice stays
+the default and the automatic fallback.
 
 ## Commands
 
@@ -97,6 +118,7 @@ user must still grant `ai:<name>` at runtime.
 | `jarvis` | Start the assistant (voice if available, else text) |
 | `jarvis --text` | Console chat mode |
 | `jarvis --ui` | Also serve the local orb status page (127.0.0.1 only) |
+| `jarvis setup` | Consent wizard: choose allow/ask/deny per capability |
 | `jarvis setup-google` | Run Google authorization now |
 | `jarvis secrets set anthropic` | Store the Claude API key in the keyring |
 | `jarvis permissions list` / `revoke <cap>` | Review / revoke standing grants |
@@ -111,6 +133,10 @@ size, TTS voice, the Claude model/effort, and the approved AI-tool list.
 
 ## Deployment notes (IT)
 
+- **Employee installs**: `powershell -File scripts\install.ps1` copies the app
+  to `%LOCALAPPDATA%\Jarvis`, builds its venv, runs the consent wizard and the
+  API-key prompt, and registers per-user autostart. `scripts\uninstall.ps1`
+  reverses it. (`scripts\setup.ps1` remains the developer-machine setup.)
 - Run Jarvis **in the user session** (Startup shortcut or HKCU Run key →
   `pythonw.exe`). Never as a Windows service — session-0 isolation breaks
   microphone access.

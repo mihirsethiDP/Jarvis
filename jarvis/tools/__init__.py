@@ -78,13 +78,41 @@ def as_document(source: str, content: str) -> str:
     )
 
 
+# Which capability gates each built-in tool. A standing denial (from the
+# setup wizard) removes the tool from the model's toolset entirely — the
+# model can't even attempt what the employee said no to.
+_TOOL_CAPABILITIES = {
+    "list_folder": "files_read",
+    "search_files": "files_read",
+    "read_file": "files_read",
+    "write_file": "files_write",
+    "drive_search": "drive_read",
+    "drive_read": "drive_read",
+    "drive_save_text": "drive_write",
+    "drive_upload": "drive_write",
+    "send_email": "email_send",
+}
+
+
 def build_all_tools(ctx: ToolContext) -> list:
-    """Assemble the full tool list for the agent."""
-    from . import ai_bridge, gdrive, gmail, local_files
+    """Assemble the tool list for the agent, honoring standing denials."""
+    from . import ai_bridge, gdrive, gmail, internal, local_files
 
     tools: list = []
     tools += local_files.build_tools(ctx)
     tools += gdrive.build_tools(ctx)
     tools += gmail.build_tools(ctx)
-    tools += ai_bridge.build_tools(ctx)
+    tools = [
+        t for t in tools
+        if not ctx.permissions.denied(_TOOL_CAPABILITIES.get(t.name, ""))
+    ]
+
+    # ask_ai_tool spans every configured AI tool; drop it only if all are denied.
+    ai_tools = ai_bridge.build_tools(ctx)
+    if ai_tools and not all(
+        ctx.permissions.denied(f"ai:{t.name}") for t in ctx.config.ai_tools
+    ):
+        tools += ai_tools
+
+    tools += internal.build_tools(ctx)  # does its own per-tool filtering
     return tools

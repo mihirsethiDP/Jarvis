@@ -97,8 +97,10 @@ def get_credentials(
             creds = None
 
     if not interactive:
+        from ..paths import cli_hint
+
         raise GoogleAuthError(
-            "Google authorization required. Run `jarvis setup-google` first."
+            f"Google authorization required. Run {cli_hint('setup-google')} first."
         )
 
     if not credentials_file or not Path(credentials_file).expanduser().exists():

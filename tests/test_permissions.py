@@ -62,3 +62,21 @@ def test_revoke_removes_persistent_grant(tmp_path, audit):
 
     pm2, _ = make_pm(tmp_path, audit, [""])
     assert pm2.require("drive_read", "read Drive") is False
+
+
+def test_weak_hindi_fillers_do_not_grant(tmp_path, audit):
+    # "ji" / "ek baar" are ambient office speech, not consent.
+    for answer in ["ji", "Ji.", "जी", "ek baar", "एक बार।"]:
+        pm, _ = make_pm(tmp_path, audit, [answer])
+        assert pm.require("files_read", "read files") is False, answer
+
+
+def test_unambiguous_hindi_answers_grant(tmp_path, audit):
+    for answer in ["haan", "ji haan", "Theek hai."]:
+        pm, _ = make_pm(tmp_path, audit, [answer])
+        assert pm.require("files_read", "read files") is True, answer
+
+
+def test_eof_during_prompt_fails_closed(tmp_path, audit):
+    pm, _ = make_pm(tmp_path, audit, [])  # FakeIO raises EOFError
+    assert pm.require("files_read", "read files") is False

@@ -28,10 +28,9 @@ class TextIO:
 
     def ask(self, prompt: str) -> str:
         print(f"\nJarvis: {prompt}")
-        try:
-            return input("You: ").strip()
-        except EOFError:
-            return ""
+        # EOFError propagates: callers must distinguish "input channel closed"
+        # from an empty answer (the setup wizard aborts; security gates deny).
+        return input("You: ").strip()
 
 
 class VoiceIO:
