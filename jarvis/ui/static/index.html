@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jarvis</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --idle: #2a7fff; --listening: #16e0c8; --transcribing: #f5c542;
+    --thinking: #a970ff; --speaking: #ff7847; --offline: #555;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(ellipse at center, #0b1020 0%, #05070d 70%);
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2.2rem;
+    font-family: "Segoe UI", system-ui, sans-serif; color: #cfd8ea;
+    overflow: hidden;
+  }
+  .orb-wrap { position: relative; width: 260px; height: 260px; }
+  .orb, .ring, .halo {
+    position: absolute; inset: 0; border-radius: 50%;
+  }
+  .orb {
+    inset: 55px;
+    background: radial-gradient(circle at 35% 30%, #ffffffcc 0%, var(--c, var(--idle)) 28%, #060a14 95%);
+    box-shadow: 0 0 60px 8px var(--c, var(--idle));
+    transition: box-shadow .6s ease;
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  .ring {
+    border: 1px solid color-mix(in srgb, var(--c, var(--idle)) 55%, transparent);
+    animation: spin 14s linear infinite;
+  }
+  .ring::before {
+    content: ""; position: absolute; top: -4px; left: 50%;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--c, var(--idle)); box-shadow: 0 0 12px var(--c, var(--idle));
+  }
+  .ring.r2 { inset: 22px; animation-duration: 9s; animation-direction: reverse; opacity: .7; }
+  .halo {
+    inset: -30px; border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--c, var(--idle)) 16%, transparent) 0%, transparent 70%);
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  body[data-state="listening"] .orb  { animation-duration: 1.1s; }
+  body[data-state="thinking"] .ring  { animation-duration: 3.5s; }
+  body[data-state="speaking"] .orb   { animation-duration: 0.8s; }
+  body[data-state="offline"] .orb, body[data-state="offline"] .ring { animation-play-state: paused; }
+  h1 { font-weight: 300; font-size: 1.1rem; letter-spacing: .45em; text-transform: uppercase; }
+  #state { font-size: 1.5rem; font-weight: 600; letter-spacing: .08em;
+           color: var(--c, var(--idle)); text-transform: capitalize; transition: color .4s; }
+  #detail { max-width: 520px; text-align: center; opacity: .55; font-size: .9rem;
+            min-height: 1.2em; padding: 0 1rem; }
+  footer { position: fixed; bottom: 14px; opacity: .3; font-size: .72rem; letter-spacing: .1em; }
+</style>
+</head>
+<body data-state="idle">
+  <h1>Jarvis</h1>
+  <div class="orb-wrap"><div class="halo"></div><div class="ring"></div><div class="ring r2"></div><div class="orb"></div></div>
+  <div id="state">connecting…</div>
+  <div id="detail"></div>
+  <footer>DIGITALPAANI · INTERNAL ASSISTANT · ORB UI INSPIRED BY ULTRON</footer>
+<script>
+  const colors = {
+    idle: "--idle", listening: "--listening", transcribing: "--transcribing",
+    thinking: "--thinking", speaking: "--speaking", offline: "--offline",
+  };
+  const stateEl = document.getElementById("state");
+  const detailEl = document.getElementById("detail");
+  const labels = {
+    idle: 'say "Hey Jarvis"', listening: "listening…", transcribing: "transcribing…",
+    thinking: "thinking…", speaking: "speaking", starting: "starting…", offline: "offline",
+  };
+  function apply(msg) {
+    const s = msg.state || "idle";
+    document.body.dataset.state = s;
+    const varName = colors[s] || "--idle";
+    document.body.style.setProperty("--c", getComputedStyle(document.documentElement).getPropertyValue(varName));
+    stateEl.textContent = labels[s] || s;
+    detailEl.textContent = s === "thinking" && msg.detail ? "“" + msg.detail + "”" : (msg.detail || "");
+  }
+  let keepalive = null;
+  function connect() {
+    if (!location.host) { apply({ state: "offline", detail: "open via the Jarvis status server" }); return; }
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onmessage = (e) => apply(JSON.parse(e.data));
+    ws.onclose = () => { apply({ state: "offline" }); clearInterval(keepalive); setTimeout(connect, 2000); };
+    clearInterval(keepalive);
+    keepalive = setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 20000);
+  }
+  connect();
+</script>
+</body>
+</html>

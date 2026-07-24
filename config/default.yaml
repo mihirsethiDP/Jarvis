@@ -1,0 +1,75 @@
+# Jarvis default configuration.
+# Per-user overrides live at  %APPDATA%\Jarvis\config.yaml  (same structure —
+# only the keys you want to change). Nothing in this file is a secret.
+
+assistant:
+  name: Jarvis
+  # When true, skip the microphone entirely and run as a console chat.
+  text_mode: false
+
+brain:
+  model: claude-opus-4-8
+  # low | medium | high — voice interactions favor low (terse, fast).
+  effort: low
+  max_tokens: 4096
+  # How many previous exchanges to keep in the conversation window.
+  max_history_turns: 20
+
+audio:
+  input_device: null        # null = system default microphone
+  sample_rate: 16000
+  wake:
+    engine: openwakeword    # openwakeword (offline, free)
+    model: hey_jarvis       # pretrained openWakeWord model
+    threshold: 0.5
+  stt:
+    engine: faster-whisper  # faster-whisper (offline) | google (online)
+    model_size: base.en     # tiny.en | base.en | small.en ...
+    compute_type: int8
+    max_seconds: 20         # hard cap on a single utterance
+    silence_seconds: 1.2    # end of speech after this much silence
+  tts:
+    engine: pyttsx3         # pyttsx3 (offline, Windows SAPI)
+    voice: null             # substring of an installed SAPI voice name
+    rate: 180
+
+google:
+  # Path to the OAuth client secrets JSON for the company's *internal* Google
+  # Cloud app (Desktop type). Internal apps skip Google's verification review.
+  credentials_file: ""
+  # Least privilege by default:
+  #   drive.file     — read/write only files Jarvis created or the user picked
+  #   drive.readonly — needed to search/fetch existing company documents
+  #   gmail.send     — send email only; no read access to the mailbox
+  scopes:
+    - https://www.googleapis.com/auth/drive.file
+    - https://www.googleapis.com/auth/drive.readonly
+    - https://www.googleapis.com/auth/gmail.send
+
+files:
+  # Local directories Jarvis may read from / write to. Anything outside these
+  # is refused at the tool layer regardless of what the model asks for.
+  allowed_dirs:
+    - "~/Documents"
+    - "~/Downloads"
+
+# External AI tools Jarvis may forward prompts to — only if listed here AND
+# the user grants permission at runtime. Example:
+#   - name: company-gpt
+#     kind: openai-compatible     # openai-compatible | anthropic
+#     base_url: https://llm.internal.example.com/v1
+#     model: gpt-4o
+#     api_key_env: COMPANY_GPT_API_KEY
+ai_tools: []
+
+security:
+  # Speak/print a summary and require an explicit "yes" before any action
+  # that leaves the machine or modifies data. Do not turn this off lightly.
+  require_confirmation: true
+  # "Allow for this session" grants expire after this many minutes.
+  session_grant_minutes: 480
+
+ui:
+  enabled: false
+  host: 127.0.0.1
+  port: 8763
