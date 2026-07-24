@@ -54,3 +54,16 @@ def test_no_allowed_dirs_blocks_relative_paths(tmp_path, audit):
     # No configured dirs at all -> nothing resolves.
     with pytest.raises(PathNotAllowed):
         resolve_safe(ctx, "anything.txt")
+
+
+def test_ads_stream_paths_are_rejected(tmp_path, audit):
+    ctx = make_ctx(tmp_path, audit)
+    with pytest.raises(PathNotAllowed):
+        resolve_safe(ctx, str(tmp_path / "docs" / "note.txt:hidden"))
+
+
+def test_reserved_device_names_are_rejected(tmp_path, audit):
+    ctx = make_ctx(tmp_path, audit)
+    for name in ["CON", "nul.txt", "COM1.log"]:
+        with pytest.raises(PathNotAllowed):
+            resolve_safe(ctx, str(tmp_path / "docs" / name))

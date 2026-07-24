@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 from .brain import JarvisAgent
 from .config import Config
@@ -27,18 +28,20 @@ def bootstrap_api_key() -> bool:
 
 class JarvisApp:
     def __init__(self, config: Config, *, force_text: bool = False, with_ui: bool = False):
+        # Must run before JarvisAgent constructs anthropic.Anthropic(), which
+        # snapshots ANTHROPIC_API_KEY from the environment at that moment.
+        bootstrap_api_key()
         self.config = config
-        self.audit = AuditLog()
+        self.audit = AuditLog(anchored=True)
         self.state_server = None
 
         if with_ui or config.get("ui.enabled", False):
             try:
                 from .ui.server import StateServer
 
-                self.state_server = StateServer(
-                    host=str(config.get("ui.host", "127.0.0.1")),
-                    port=int(config.get("ui.port", 8763)),
-                )
+                # Loopback only, by design — the page shows live conversation
+                # state and must never be reachable from the LAN.
+                self.state_server = StateServer(port=int(config.get("ui.port", 8763)))
                 self.state_server.start()
             except ImportError:
                 print("UI dependencies missing — run `pip install .[ui]`. Continuing without UI.")
@@ -54,7 +57,10 @@ class JarvisApp:
         self.permissions = PermissionManager(
             io, self.audit, session_grant_minutes=config.session_grant_minutes
         )
-        self.confirmer = Confirmer(io, self.audit, enabled=config.require_confirmation)
+        # Side-effect confirmation is always on — deliberately not configurable,
+        # so no config edit (or prompt-injected "helpful suggestion") can
+        # disable the human-in-the-loop gate.
+        self.confirmer = Confirmer(io, self.audit)
         ctx = ToolContext(
             config=config, permissions=self.permissions,
             confirmer=self.confirmer, audit=self.audit,
@@ -78,6 +84,7 @@ class JarvisApp:
             from .audio.wake import WakeWordDetector
         except ImportError:
             return None
+        mic = None
         try:
             cfg = self.config
             mic = Microphone(
@@ -107,6 +114,8 @@ class JarvisApp:
             return {"mic": mic, "wake": wake, "recorder": recorder,
                     "stt": stt, "speaker": speaker}
         except Exception as e:
+            if mic is not None:
+                mic.stop()  # don't leave the stream capturing in text mode
             print(f"Voice pipeline failed to start ({e}).")
             return None
 
@@ -141,6 +150,24 @@ class JarvisApp:
             self._run_text()
 
     def _run_text(self) -> None:
+        if sys.stdin is None:
+            # Launched via pythonw.exe (autostart) but voice never came up:
+            # there is no console to fall back to. Fail loudly, not silently.
+            self.audit.record("startup", detail="voice unavailable and no console",
+                              decision="failed", ok=False)
+            try:
+                import ctypes
+
+                ctypes.windll.user32.MessageBoxW(
+                    None,
+                    "Jarvis could not start voice mode and has no console for text "
+                    "mode. Run 'jarvis --text' from a terminal to diagnose.",
+                    "Jarvis failed to start",
+                    0x10,  # MB_ICONERROR
+                )
+            except Exception:
+                pass
+            return
         name = self.config.get("assistant.name", "Jarvis")
         print(f"\n{name} (text mode) — type your request, or 'exit' to quit.")
         self._publish("idle")
@@ -166,27 +193,40 @@ class JarvisApp:
         print(f'\n{name} is listening — say "Hey Jarvis". Ctrl+C to quit.')
         try:
             while True:
-                self._publish("idle")
-                v["wake"].wait()
-                self._publish("listening")
-                print("(wake word detected — listening…)")
-                audio = v["recorder"].record()
-                self._publish("transcribing")
-                text = v["stt"].transcribe(audio)
-                if not text:
-                    v["speaker"].say("Sorry, I didn't catch that.")
+                # One bad turn (TTS hiccup, tool exception, STT failure) must
+                # never take the whole assistant down.
+                try:
+                    self._publish("idle")
+                    v["wake"].wait()
+                    self._publish("listening")
+                    print("(wake word detected — listening…)")
+                    audio = v["recorder"].record()
+                    self._publish("transcribing")
+                    text = v["stt"].transcribe(audio)
+                    if not text:
+                        v["speaker"].say("Sorry, I didn't catch that.")
+                        v["mic"].drain()
+                        continue
+                    print(f"You: {text}")
+                    if text.lower().strip(" .!,") in _EXIT_PHRASES:
+                        v["speaker"].say("Shutting down. Goodbye.")
+                        break
+                    self._publish("thinking", text)
+                    reply = self.agent.run_turn(text)
+                    self._publish("speaking", reply)
+                    print(f"Jarvis: {reply}")
+                    v["speaker"].say(reply)
                     v["mic"].drain()
-                    continue
-                print(f"You: {text}")
-                if text.lower().strip(" .!,") in _EXIT_PHRASES:
-                    v["speaker"].say("Shutting down. Goodbye.")
-                    break
-                self._publish("thinking", text)
-                reply = self.agent.run_turn(text)
-                self._publish("speaking", reply)
-                print(f"Jarvis: {reply}")
-                v["speaker"].say(reply)
-                v["mic"].drain()
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    self.audit.record("error", tool="voice_loop", detail=str(e), ok=False)
+                    print(f"(recovered from error: {e})")
+                    try:
+                        v["speaker"].say("Something went wrong with that one — try again.")
+                        v["mic"].drain()
+                    except Exception:
+                        pass
         except KeyboardInterrupt:
             pass
         finally:

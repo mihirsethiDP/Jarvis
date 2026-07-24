@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ..io_channel import IOChannel
 from .audit import AuditLog
+from .permissions import normalize_answer
 
 _YES = {"yes", "confirm", "confirmed", "do it", "go ahead", "send it", "yep", "yeah", "ok", "okay"}
 
@@ -21,21 +22,27 @@ class Confirmer:
         self.audit = audit
         self.enabled = enabled
 
-    def confirm(self, action: str, summary: str) -> bool:
-        """Read the action back to the user; only an explicit yes proceeds."""
+    def confirm(self, action: str, summary: str, *, audit_detail: str | None = None) -> bool:
+        """Read the action back to the user; only an explicit yes proceeds.
+
+        *summary* is spoken to the user and should be concrete (it may quote
+        content); *audit_detail* is what lands in the audit log — pass a
+        content-free variant when the summary contains message bodies.
+        """
+        detail = audit_detail if audit_detail is not None else summary
         if not self.enabled:
-            self.audit.record("confirmation", tool=action, detail=summary,
+            self.audit.record("confirmation", tool=action, detail=detail,
                               decision="skipped_disabled", ok=True)
             return True
 
-        answer = self.io.ask(
+        answer = normalize_answer(self.io.ask(
             f"Please confirm — {summary} Say yes to proceed, or no to cancel."
-        ).lower().strip()
+        ))
         confirmed = answer in _YES
         self.audit.record(
             "confirmation",
             tool=action,
-            detail=summary,
+            detail=detail,
             decision="confirmed" if confirmed else "cancelled",
             ok=confirmed,
         )

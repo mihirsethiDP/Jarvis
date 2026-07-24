@@ -19,8 +19,10 @@ _STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 class StateServer:
-    def __init__(self, host: str = "127.0.0.1", port: int = 8763):
-        self.host = host
+    def __init__(self, port: int = 8763):
+        # Hard-coded loopback — the page shows live conversation content, so a
+        # LAN-reachable bind is never acceptable regardless of config.
+        self.host = "127.0.0.1"
         self.port = port
         self._state = {"state": "starting", "detail": ""}
         self._clients: list[WebSocket] = []
@@ -36,10 +38,21 @@ class StateServer:
 
         @app.get("/")
         async def index() -> HTMLResponse:
+            if not _STATIC.exists():
+                return HTMLResponse(
+                    "Jarvis UI assets missing — reinstall the package.", status_code=500
+                )
             return HTMLResponse(_STATIC.read_text(encoding="utf-8"))
 
         @app.websocket("/ws")
         async def ws(websocket: WebSocket) -> None:
+            # Browsers always send Origin; reject anything that isn't our own
+            # loopback page so a malicious website can't read live state.
+            origin = websocket.headers.get("origin")
+            allowed = {f"http://{h}:{self.port}" for h in ("127.0.0.1", "localhost")}
+            if origin is not None and origin not in allowed:
+                await websocket.close(code=1008)
+                return
             await websocket.accept()
             self._clients.append(websocket)
             try:

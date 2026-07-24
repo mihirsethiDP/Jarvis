@@ -49,3 +49,39 @@ def test_chain_continues_across_instances(tmp_path):
     intact, count = AuditLog(path=path).verify_chain()
     assert intact is True
     assert count == 2
+
+
+def test_interleaved_writers_extend_one_chain(tmp_path):
+    # Assistant + CLI appending concurrently must not fork the chain.
+    path = tmp_path / "a.jsonl"
+    writer_a, writer_b = AuditLog(path=path), AuditLog(path=path)
+    for i in range(3):
+        writer_a.record("tool_call", tool=f"a{i}")
+        writer_b.record("tool_call", tool=f"b{i}")
+    intact, count = AuditLog(path=path).verify_chain()
+    assert intact is True
+    assert count == 6
+
+
+def test_anchor_detects_tail_truncation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    store: dict[str, str] = {}
+    fake = SimpleNamespace(
+        get_secret=store.get,
+        set_secret=lambda name, value: store.__setitem__(name, value) or True,
+        delete_secret=lambda name: store.pop(name, None) is not None,
+    )
+    monkeypatch.setattr("jarvis.security.audit.secret_store", fake)
+
+    path = tmp_path / "a.jsonl"
+    log = AuditLog(path=path, anchored=True)
+    for i in range(4):
+        log.record("tool_call", tool=f"t{i}")
+    assert AuditLog(path=path, anchored=True).verify_chain() == (True, 4)
+
+    # Remove the newest entry — a bare hash chain cannot see this.
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    intact, _ = AuditLog(path=path, anchored=True).verify_chain()
+    assert intact is False

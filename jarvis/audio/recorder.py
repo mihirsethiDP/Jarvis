@@ -30,13 +30,18 @@ class UtteranceRecorder:
         self.start_window_seconds = start_window_seconds
 
     def record(self) -> np.ndarray:
-        """Record one utterance; returns float32 mono 16 kHz audio (may be empty)."""
+        """Record one utterance; returns float32 mono 16 kHz audio (may be empty).
+
+        The noise floor adapts only on *non-speech* blocks, and speech is
+        checked from the very first block — so a user who starts talking
+        immediately (one-breath "Hey Jarvis, what's…") is captured instead of
+        being averaged into the noise floor.
+        """
         blocks: list[np.ndarray] = []
-        noise_rms = 100.0  # int16 scale; adapts to the room below
+        noise_rms = 150.0  # prior on int16 scale; adapts to the room below
         speech_started = False
         silence_run = 0.0
         elapsed = 0.0
-        calibration: list[float] = []
 
         while elapsed < self.max_seconds:
             block = self.mic.read(timeout=1.0)
@@ -46,26 +51,22 @@ class UtteranceRecorder:
             elapsed += _BLOCK_SECONDS
             rms = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
 
-            if len(calibration) < 8:  # first ~0.25 s calibrates the noise floor
-                calibration.append(rms)
-                blocks.append(block)
-                if len(calibration) == 8:
-                    noise_rms = max(np.median(calibration), 50.0)
-                continue
-
-            threshold = max(noise_rms * 3.0, 250.0)
+            threshold = max(noise_rms * 3.0, 300.0)
             is_speech = rms >= threshold
             blocks.append(block)
 
             if is_speech:
                 speech_started = True
                 silence_run = 0.0
-            elif speech_started:
-                silence_run += _BLOCK_SECONDS
-                if silence_run >= self.silence_seconds:
-                    break
-            elif elapsed >= self.start_window_seconds:
-                return np.empty(0, dtype=np.float32)  # user never spoke
+            else:
+                # Exponential floor tracking, updated only when not speaking.
+                noise_rms = 0.9 * noise_rms + 0.1 * rms
+                if speech_started:
+                    silence_run += _BLOCK_SECONDS
+                    if silence_run >= self.silence_seconds:
+                        break
+                elif elapsed >= self.start_window_seconds:
+                    return np.empty(0, dtype=np.float32)  # user never spoke
 
         if not speech_started or not blocks:
             return np.empty(0, dtype=np.float32)

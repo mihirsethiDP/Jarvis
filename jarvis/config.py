@@ -11,7 +11,7 @@ import yaml
 
 from .paths import user_config_file
 
-_REPO_DEFAULT = Path(__file__).resolve().parent.parent / "config" / "default.yaml"
+_PACKAGE_DEFAULT = Path(__file__).resolve().parent / "defaults.yaml"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -98,10 +98,6 @@ class Config:
         return str(self.get("google.credentials_file", "") or "")
 
     @property
-    def require_confirmation(self) -> bool:
-        return bool(self.get("security.require_confirmation", True))
-
-    @property
     def session_grant_minutes(self) -> int:
         return int(self.get("security.session_grant_minutes", 480))
 
@@ -109,8 +105,11 @@ class Config:
 def load_config(explicit_path: str | None = None) -> Config:
     """Load repo defaults, then overlay the user's config (or an explicit file)."""
     data: dict = {}
-    if _REPO_DEFAULT.exists():
-        data = yaml.safe_load(_REPO_DEFAULT.read_text(encoding="utf-8")) or {}
+    if _PACKAGE_DEFAULT.exists():
+        data = yaml.safe_load(_PACKAGE_DEFAULT.read_text(encoding="utf-8")) or {}
+    else:
+        print(f"Warning: packaged defaults missing at {_PACKAGE_DEFAULT} — "
+              "running on built-in fallbacks. Reinstall the package.")
 
     override_path = Path(explicit_path) if explicit_path else user_config_file()
     if override_path.exists():

@@ -48,11 +48,30 @@ class Microphone:
             self._stream = None
 
     def read(self, timeout: float | None = None) -> np.ndarray | None:
-        """Return the next 512-sample int16 block, or None on timeout."""
+        """Return the next 512-sample int16 block, or None on timeout.
+
+        A timeout with a dead stream (headset unplugged, device switched)
+        triggers a reopen attempt, so Jarvis recovers instead of going
+        permanently deaf.
+        """
         try:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
+            self._recover_if_dead()
             return None
+
+    def _recover_if_dead(self) -> None:
+        stream = self._stream
+        if stream is not None and stream.active:
+            return  # stream is fine — the room is just silent
+        print("Microphone stream lost — attempting to reopen…")
+        try:
+            self.stop()
+            self.start()
+            print("Microphone recovered.")
+        except Exception as e:
+            self._stream = None
+            print(f"Microphone unavailable ({e}); will retry.")
 
     def drain(self) -> None:
         """Discard everything buffered (e.g. audio captured while Jarvis spoke)."""

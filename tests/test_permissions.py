@@ -46,6 +46,15 @@ def test_always_grant_persists_across_instances(tmp_path, audit):
     assert io2.asked == []
 
 
+def test_spoken_answers_with_punctuation_are_understood(tmp_path, audit):
+    # Whisper transcribes speech with punctuation/capitalization.
+    pm, _ = make_pm(tmp_path, audit, ["Allow once."])
+    assert pm.require("files_read", "read files") is True
+
+    pm2, _ = make_pm(tmp_path, audit, ["Always allow!"])
+    assert pm2.require("drive_read", "read Drive") is True
+
+
 def test_revoke_removes_persistent_grant(tmp_path, audit):
     pm, _ = make_pm(tmp_path, audit, ["always allow"])
     pm.require("drive_read", "read Drive")

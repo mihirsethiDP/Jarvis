@@ -18,11 +18,13 @@ def test_dotted_get_with_default():
     assert cfg.get("nope.nope") is None
 
 
-def test_repo_defaults_load():
-    cfg = load_config()
+def test_packaged_defaults_load(tmp_path):
+    # Hermetic: point the override at a nonexistent file so the developer's
+    # own %APPDATA%\Jarvis\config.yaml never leaks into the assertion.
+    cfg = load_config(str(tmp_path / "no-user-config.yaml"))
     assert cfg.model
     assert cfg.get("assistant.name") == "Jarvis"
-    assert isinstance(cfg.require_confirmation, bool)
+    assert cfg.session_grant_minutes > 0
 
 
 def test_ai_tools_skips_malformed_entries():

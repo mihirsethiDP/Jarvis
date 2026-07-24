@@ -51,7 +51,8 @@ def build_tools(ctx: ToolContext) -> list:
                 f"modified: {f.get('modifiedTime', '?')[:10]})"
                 for f in files
             ]
-            return "Drive results:\n" + "\n".join(lines)
+            # Drive titles are attacker-influenceable content — wrap as data.
+            return as_document(f"drive-search:{query}", "\n".join(lines))
         except Exception as e:  # googleapiclient raises many transport error types
             ctx.audit.record("tool_call", tool="drive_search", detail=query, ok=False)
             return f"Drive search failed: {e}"
@@ -85,14 +86,17 @@ def build_tools(ctx: ToolContext) -> list:
                 )
 
             buf = io.BytesIO()
-            downloader = MediaIoBaseDownload(buf, request)
+            # Small chunks so the byte cap actually bounds the transfer
+            # (default chunk size is 100 MB, which would defeat the loop guard).
+            downloader = MediaIoBaseDownload(buf, request, chunksize=64 * 1024)
             done = False
             while not done and buf.tell() <= _MAX_EXPORT_BYTES:
                 _, done = downloader.next_chunk()
+            truncated = (not done) or buf.tell() > _MAX_EXPORT_BYTES
             text = buf.getvalue()[:_MAX_EXPORT_BYTES].decode("utf-8", errors="replace")
             ctx.audit.record("tool_call", tool="drive_read", detail=f"{name} ({file_id})")
             doc = as_document(f"gdrive:{name}", text)
-            return doc + ("" if done else "\n[Truncated — document is larger than the read limit.]")
+            return doc + ("\n[Truncated — document is larger than the read limit.]" if truncated else "")
         except Exception as e:
             ctx.audit.record("tool_call", tool="drive_read", detail=file_id, ok=False)
             return f"Drive read failed: {e}"

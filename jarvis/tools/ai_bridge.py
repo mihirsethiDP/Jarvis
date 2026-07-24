@@ -41,7 +41,18 @@ def _call_openai_compatible(tool: AIToolConfig, prompt: str) -> str:
 def _call_anthropic(tool: AIToolConfig, prompt: str) -> str:
     import anthropic
 
-    api_key = os.environ.get(tool.api_key_env, "") if tool.api_key_env else None
+    # Fail closed: with api_key=None the SDK falls back to ANTHROPIC_API_KEY —
+    # which would silently send the company's Jarvis key to an external host.
+    if not tool.api_key_env:
+        raise RuntimeError(
+            f"AI tool '{tool.name}' has no api_key_env configured; refusing to "
+            "fall back to the ANTHROPIC_API_KEY environment variable."
+        )
+    api_key = os.environ.get(tool.api_key_env, "")
+    if not api_key:
+        raise RuntimeError(
+            f"Environment variable '{tool.api_key_env}' for AI tool '{tool.name}' is not set."
+        )
     client = anthropic.Anthropic(base_url=tool.base_url or None, api_key=api_key)
     response = client.messages.create(
         model=tool.model or "claude-opus-4-8",
@@ -66,6 +77,18 @@ def build_tools(ctx: ToolContext) -> list:
             f"ai:{tool.name}", f"send prompts to the external AI tool '{tool.name}'"
         ):
             return f"The user declined access to '{tool.name}'."
+        # Sending a prompt off-machine is an egress side effect — confirm the
+        # specific payload like any other, even with a standing grant.
+        preview = prompt if len(prompt) <= 150 else prompt[:150] + "…"
+        summary = (
+            f"I will send a prompt of {len(prompt)} characters to the external AI "
+            f'tool {tool.name}. It begins: "{preview}".'
+        )
+        if not ctx.confirmer.confirm(
+            "ask_ai_tool", summary,
+            audit_detail=f"{tool.name}: {len(prompt)} chars",
+        ):
+            return f"Cancelled — the user did not confirm sending the prompt to '{tool.name}'."
         try:
             if tool.kind == "anthropic":
                 answer = _call_anthropic(tool, prompt)

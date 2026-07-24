@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
 
 from .config import load_config
@@ -23,14 +24,28 @@ _SECRET_ALIASES = {"anthropic": "anthropic-api-key"}
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Under pythonw.exe (autostart) stdout/stderr are None and any print()
+    # would crash the process — route them to devnull instead.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     parser = argparse.ArgumentParser(prog="jarvis", description="Jarvis voice assistant")
     parser.add_argument("--config", help="Path to a config YAML override", default=None)
+    parser.add_argument("--text", action="store_true", help="Console chat mode (no mic)")
+    parser.add_argument("--ui", action="store_true", help="Serve the local status page")
     sub = parser.add_subparsers(dest="cmd")
 
+    # The run subparser accepts the same flags, but with SUPPRESS defaults so
+    # parsing "jarvis --text run" doesn't clobber flags given before the
+    # subcommand ("jarvis run --text" and "jarvis run --config X" also work).
     run_p = sub.add_parser("run", help="Start the assistant (default)")
-    for p in (parser, run_p):
-        p.add_argument("--text", action="store_true", help="Console chat mode (no mic)")
-        p.add_argument("--ui", action="store_true", help="Serve the local status page")
+    run_p.add_argument("--config", default=argparse.SUPPRESS,
+                       help="Path to a config YAML override")
+    run_p.add_argument("--text", action="store_true", default=argparse.SUPPRESS,
+                       help="Console chat mode (no mic)")
+    run_p.add_argument("--ui", action="store_true", default=argparse.SUPPRESS,
+                       help="Serve the local status page")
 
     sub.add_parser("setup-google", help="Authorize Google Drive/Gmail access now")
 
@@ -86,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         from .io_channel import TextIO
         from .security import AuditLog, PermissionManager
 
-        pm = PermissionManager(TextIO(), AuditLog(),
+        pm = PermissionManager(TextIO(), AuditLog(anchored=True),
                                session_grant_minutes=config.session_grant_minutes)
         if args.action == "list":
             grants = pm.list_grants()
@@ -105,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "audit":
         from .security import AuditLog
 
-        log = AuditLog()
+        log = AuditLog(anchored=True)
         if args.verify:
             intact, count = log.verify_chain()
             print(f"Audit chain {'INTACT' if intact else 'BROKEN'} ({count} entries verified).")

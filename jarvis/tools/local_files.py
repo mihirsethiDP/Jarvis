@@ -21,11 +21,26 @@ class PathNotAllowed(ValueError):
     pass
 
 
+# CON, NUL, COM1… are device names on Windows; "file.txt:stream" is an NTFS
+# alternate data stream that would bypass suffix checks and dir listings.
+_RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                   *(f"lpt{i}" for i in range(1, 10))}
+
+
+def _reject_windows_tricks(path_str: str, resolved: Path) -> None:
+    body = path_str[2:] if len(path_str) >= 2 and path_str[1] == ":" else path_str
+    if ":" in body:
+        raise PathNotAllowed("Paths with NTFS alternate data streams are not allowed.")
+    stem = resolved.name.split(".")[0].lower()
+    if stem in _RESERVED_NAMES:
+        raise PathNotAllowed(f"'{resolved.name}' is a reserved Windows device name.")
+
+
 def resolve_safe(ctx: ToolContext, path_str: str) -> Path:
     """Resolve a user/model supplied path and verify it stays inside the allowlist.
 
     Resolution happens *before* the containment check, so `..` and symlink
-    escapes are caught.
+    escapes are caught; ADS and device-name tricks are rejected outright.
     """
     path = Path(path_str).expanduser()
     allowed = ctx.config.allowed_dirs
@@ -35,6 +50,7 @@ def resolve_safe(ctx: ToolContext, path_str: str) -> Path:
             raise PathNotAllowed("No allowed directories are configured.")
         path = allowed[0] / path
     resolved = path.resolve()
+    _reject_windows_tricks(path_str, resolved)
     for root in allowed:
         try:
             if resolved.is_relative_to(root):
@@ -68,7 +84,8 @@ def build_tools(ctx: ToolContext) -> list:
                 f"{'[dir] ' if e.is_dir() else ''}{e.name}" for e in entries[:_MAX_RESULTS * 2]
             ]
             ctx.audit.record("tool_call", tool="list_folder", detail=str(target))
-            return f"Contents of {target}:\n" + ("\n".join(lines) if lines else "(empty)")
+            # File names are attacker-influenceable content — wrap as data.
+            return as_document(f"folder:{target}", "\n".join(lines) if lines else "(empty)")
         except PathNotAllowed as e:
             ctx.audit.record("tool_call", tool="list_folder", detail=folder,
                              decision="blocked_path", ok=False)
@@ -103,7 +120,7 @@ def build_tools(ctx: ToolContext) -> list:
         ctx.audit.record("tool_call", tool="search_files", detail=needle)
         if not hits:
             return f"No files matching '{name}' in the allowed directories."
-        return "Found:\n" + "\n".join(hits)
+        return as_document(f"search:{name}", "\n".join(hits))
 
     @beta_tool
     def read_file(path: str) -> str:
@@ -153,6 +170,14 @@ def build_tools(ctx: ToolContext) -> list:
             ctx.audit.record("tool_call", tool="write_file", detail=path,
                              decision="blocked_path", ok=False)
             return f"Blocked: {e}"
+        if target.suffix.lower() not in _TEXT_SUFFIXES:
+            # Never write executables, scripts, or shortcuts — text only.
+            ctx.audit.record("tool_call", tool="write_file", detail=str(target),
+                             decision="blocked_type", ok=False)
+            return (
+                f"Blocked: '{target.suffix or target.name}' is not a writable text "
+                "type. I can write: " + ", ".join(sorted(_TEXT_SUFFIXES))
+            )
 
         exists = target.exists()
         action = "overwrite the existing file" if exists else "create a new file"

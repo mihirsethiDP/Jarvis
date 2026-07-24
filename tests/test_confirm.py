@@ -16,6 +16,11 @@ def test_anything_else_cancels(audit):
         assert c.confirm("send_email", "send to a@b.com") is False
 
 
+def test_spoken_yes_with_punctuation_confirms(audit):
+    c = Confirmer(FakeIO(["Yes."]), audit)
+    assert c.confirm("send_email", "send to a@b.com") is True
+
+
 def test_disabled_confirmer_passes_through_and_audits(audit, tmp_path):
     c = Confirmer(FakeIO([]), audit, enabled=False)
     assert c.confirm("write_file", "write x") is True

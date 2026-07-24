@@ -82,7 +82,7 @@ jarvis
    DPAPI-encrypted for that Windows user only.
 
 Default scopes are least-privilege: `drive.file` + `drive.readonly` +
-`gmail.send` (no mailbox read access). See `config/default.yaml`.
+`gmail.send` (no mailbox read access). See `jarvis/defaults.yaml`.
 
 ### External AI tools
 
@@ -104,7 +104,7 @@ user must still grant `ai:<name>` at runtime.
 
 ## Configuration
 
-Defaults live in [config/default.yaml](config/default.yaml); per-user overrides
+Defaults live in [jarvis/defaults.yaml](jarvis/defaults.yaml); per-user overrides
 go in `%APPDATA%\Jarvis\config.yaml` (same structure, only changed keys).
 Notable settings: allowed file directories, wake-word threshold, Whisper model
 size, TTS voice, the Claude model/effort, and the approved AI-tool list.
@@ -133,7 +133,7 @@ jarvis/
   security/           permissions, confirmation, audit chain, DPAPI, keyring
   integrations/       Google OAuth
   ui/                 local orb status page (FastAPI + WebSocket)
-config/default.yaml   defaults (user overrides in %APPDATA%\Jarvis)
+  defaults.yaml       defaults (user overrides in %APPDATA%\Jarvis)
 docs/SECURITY.md      threat model & rollout guidance
 tests/                security-layer test suite
 ```

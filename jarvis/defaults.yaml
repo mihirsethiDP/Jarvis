@@ -1,4 +1,4 @@
-# Jarvis default configuration.
+# Jarvis default configuration (shipped inside the package).
 # Per-user overrides live at  %APPDATA%\Jarvis\config.yaml  (same structure —
 # only the keys you want to change). Nothing in this file is a secret.
 
@@ -63,13 +63,11 @@ files:
 ai_tools: []
 
 security:
-  # Speak/print a summary and require an explicit "yes" before any action
-  # that leaves the machine or modifies data. Do not turn this off lightly.
-  require_confirmation: true
+  # Note: side-effect confirmation (spoken summary + explicit "yes") is always
+  # on and deliberately has no config switch.
   # "Allow for this session" grants expire after this many minutes.
   session_grant_minutes: 480
 
 ui:
   enabled: false
-  host: 127.0.0.1
-  port: 8763
+  port: 8763   # always bound to 127.0.0.1 (loopback only, not configurable)

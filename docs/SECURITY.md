@@ -38,10 +38,11 @@ in `%APPDATA%\Jarvis\permissions.json` — reviewable with
 ### 2. Side-effect confirmation (`jarvis/security/confirm.py`)
 
 Orthogonal to grants: any action that modifies data or leaves the machine
-(send email, write file, upload) reads a **concrete summary** back — recipient
-and subject for email, exact path and size for files — and proceeds only on an
-explicit yes. This is deliberate friction; disabling it
-(`security.require_confirmation: false`) is possible but discouraged.
+(send email, write file, upload, forward a prompt to an external AI tool)
+reads a **concrete summary** back — recipient and subject for email, exact
+path and size for files, prompt preview for AI egress — and proceeds only on
+an explicit yes. This is deliberate friction, and it is **always on**: there
+is intentionally no config switch that disables it.
 
 Because confirmation is unconditional for side effects, a prompt-injected or
 confused model still cannot silently exfiltrate: the human hears exactly what
@@ -52,14 +53,24 @@ is about to happen, every time.
 One JSON line per event (tool calls, permission decisions, confirmations,
 errors) with UTC timestamp and Windows username. Each entry embeds a SHA-256
 hash over its content plus the previous entry's hash — editing or deleting any
-line breaks the chain, detectable via `jarvis audit --verify`.
+line inside the log breaks the chain, detectable via `jarvis audit --verify`.
+Appends take an OS file lock and re-read the tail, so the assistant and CLI
+writing concurrently extend one chain rather than forking it.
+
+A bare hash chain cannot detect removal of the *newest* entries, so the head
+hash and entry count are also mirrored ("anchored") into the Windows
+Credential Manager after each append; `--verify` checks the file against that
+anchor, making tail truncation and wholesale replacement detectable too.
 
 Log hygiene: details are truncated, and bodies/secrets are not logged (email
-entries record recipient and subject, not content).
+entries record recipient and subject, not content; confirmations log a
+content-free summary).
 
-*Limitation:* a local hash chain proves tampering happened; it cannot prove
-*who* tampered, and same-user malware could rewrite the whole chain. For
-stronger guarantees, forward entries to a central sink IT controls (roadmap).
+*Limitation:* everything here is same-user-readable state. Malware running as
+the user could rewrite the chain *and* the keyring anchor together; a hash
+chain also cannot prove *who* tampered. For guarantees against a
+fully-privileged local attacker, forward entries to a central sink IT
+controls (roadmap).
 
 ### 4. Filesystem allowlist (`jarvis/tools/local_files.py`)
 

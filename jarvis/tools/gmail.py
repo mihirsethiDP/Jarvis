@@ -31,7 +31,10 @@ def build_tools(ctx: ToolContext) -> list:
             + (f" (cc {cc})" if cc else "")
             + f' with the subject "{subject}". It begins: "{preview}".'
         )
-        if not ctx.confirmer.confirm("send_email", summary):
+        if not ctx.confirmer.confirm(
+            "send_email", summary,
+            audit_detail=f'to={to} cc={cc} subject="{subject}"',  # no body in the log
+        ):
             return "Cancelled — the user did not confirm sending the email."
 
         try:

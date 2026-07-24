@@ -10,6 +10,7 @@ can review and revoke; session grants expire.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -21,6 +22,11 @@ _ALLOW_ALWAYS = {"always", "always allow", "allow always"}
 _ALLOW_SESSION = {"session", "this session", "allow for this session", "for this session"}
 _ALLOW_ONCE = {"once", "yes", "allow", "ok", "okay", "sure", "allow once", "yeah", "yep"}
 _DENY = {"no", "deny", "don't", "dont", "never", "cancel", "stop"}
+
+
+def normalize_answer(raw: str) -> str:
+    """Lowercase and strip punctuation — speech-to-text produces 'Allow once.'"""
+    return re.sub(r"[^\w\s']", " ", raw.lower()).strip().replace("  ", " ")
 
 
 class PermissionManager:
@@ -68,10 +74,10 @@ class PermissionManager:
         if self.granted(capability):
             return True
 
-        answer = self.io.ask(
+        answer = normalize_answer(self.io.ask(
             f"I need permission to {description}. "
             'Say "allow once", "allow for this session", "always allow", or "deny".'
-        ).lower().strip()
+        ))
 
         if answer in _ALLOW_ALWAYS:
             self._persistent[capability] = {"scope": "always", "granted_at": time.time()}

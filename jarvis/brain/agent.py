@@ -40,25 +40,29 @@ class JarvisAgent:
     def run_turn(self, user_text: str) -> str:
         """Run one conversational turn and return the text to speak."""
         self._trim_history()
+        # A failure can strike mid-tool-loop, after assistant/tool_result pairs
+        # were already mirrored; rolling back to the checkpoint (not popping
+        # once) guarantees no dangling tool_use is left to 400 every later turn.
+        checkpoint = len(self.messages)
         self.messages.append({"role": "user", "content": user_text})
         self.on_status("thinking")
 
         try:
             reply = self._run_tool_loop()
         except anthropic.AuthenticationError:
-            self.messages.pop()
+            del self.messages[checkpoint:]
             return (
                 "My Claude API key is missing or invalid. "
                 "Please set ANTHROPIC_API_KEY and restart me."
             )
         except anthropic.RateLimitError:
-            self.messages.pop()
+            del self.messages[checkpoint:]
             return "I'm being rate limited right now — give me a moment and try again."
         except anthropic.APIConnectionError:
-            self.messages.pop()
+            del self.messages[checkpoint:]
             return "I can't reach the Claude API — please check the network connection."
         except anthropic.APIStatusError as e:
-            self.messages.pop()
+            del self.messages[checkpoint:]
             self.audit.record("error", tool="brain", detail=str(e), ok=False)
             return "Something went wrong talking to my language model. Please try again."
 
@@ -83,6 +87,10 @@ class JarvisAgent:
             # Mirror the runner's internal history into ours so multi-turn
             # context (including tool calls) survives across turns.
             self.messages.append({"role": "assistant", "content": message.content})
+            if message.stop_reason == "refusal":
+                # Refusal turns are terminal — executing their tool_use blocks
+                # would fire side effects the model never confirmed.
+                continue
             tool_response = runner.generate_tool_call_response()
             if tool_response is not None:
                 self.messages.append(tool_response)
