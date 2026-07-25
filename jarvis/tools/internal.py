@@ -44,7 +44,11 @@ def token_secret_name(tool_name: str) -> str:
 _BUILTIN_TOOL_NAMES = {
     "list_folder", "search_files", "read_file", "write_file",
     "drive_search", "drive_read", "drive_save_text", "drive_upload",
-    "send_email", "ask_ai_tool",
+    "search_email", "read_email", "send_email", "organize_email",
+    "list_chat_spaces", "read_chat_messages", "send_chat_message",
+    "list_calendar_events", "check_availability",
+    "create_calendar_event", "delete_calendar_event",
+    "find_colleague", "ask_ai_tool",
 }
 
 

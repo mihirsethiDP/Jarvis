@@ -90,18 +90,32 @@ _TOOL_CAPABILITIES = {
     "drive_read": "drive_read",
     "drive_save_text": "drive_write",
     "drive_upload": "drive_write",
+    "search_email": "email_read",
+    "read_email": "email_read",
     "send_email": "email_send",
+    "organize_email": "email_organize",
+    "list_chat_spaces": "chat_read",
+    "read_chat_messages": "chat_read",
+    "send_chat_message": "chat_send",
+    "list_calendar_events": "calendar_read",
+    "check_availability": "calendar_read",
+    "create_calendar_event": "calendar_write",
+    "delete_calendar_event": "calendar_write",
+    "find_colleague": "directory_read",
 }
 
 
 def build_all_tools(ctx: ToolContext) -> list:
     """Assemble the tool list for the agent, honoring standing denials."""
-    from . import ai_bridge, gdrive, gmail, internal, local_files
+    from . import ai_bridge, gcalendar, gchat, gcontacts, gdrive, gmail, internal, local_files
 
     tools: list = []
     tools += local_files.build_tools(ctx)
     tools += gdrive.build_tools(ctx)
     tools += gmail.build_tools(ctx)
+    tools += gchat.build_tools(ctx)
+    tools += gcalendar.build_tools(ctx)
+    tools += gcontacts.build_tools(ctx)
     tools = [
         t for t in tools
         if not ctx.permissions.denied(_TOOL_CAPABILITIES.get(t.name, ""))

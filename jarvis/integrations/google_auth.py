@@ -1,9 +1,10 @@
-"""Google OAuth for Drive and Gmail.
+"""Google OAuth for Drive, Gmail, Chat, Calendar, and Directory lookup.
 
 Each employee authorizes Jarvis against the company's *internal* Google
 Cloud OAuth app (Desktop type) in their own browser — Jarvis never sees or
 stores their Google password. Internal-type consent screens skip Google's
-verification review entirely.
+verification review entirely. One consent flow requests every scope Jarvis
+is configured to use, across every Google app it services.
 
 Token storage: OAuth token JSON is too large for the Windows keyring's
 2560-byte blob limit, so it is kept in a DPAPI-encrypted file under
@@ -22,10 +23,27 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from ..paths import app_data_dir, google_token_file
+from ..paths import app_data_dir, cli_hint, google_token_file
 from ..security import dpapi
 
 _TOKEN_DPAPI_FILE = "google_token.bin"
+
+# Friendly names for the missing-scopes error message, keyed by a substring
+# of the scope URL (checked in order — most specific first).
+_SCOPE_PRODUCT_NAMES = [
+    ("drive", "Drive"), ("gmail", "Gmail"), ("chat.", "Chat"),
+    ("calendar", "Calendar"), ("directory", "Directory"), ("contacts", "Contacts"),
+]
+
+
+def _product_names(scopes: set[str]) -> list[str]:
+    names = set()
+    for scope in scopes:
+        for needle, label in _SCOPE_PRODUCT_NAMES:
+            if needle in scope:
+                names.add(label)
+                break
+    return sorted(names)
 
 
 class GoogleAuthError(RuntimeError):
@@ -54,7 +72,15 @@ def _load_token() -> dict | None:
 
 
 def _store_token(creds: Credentials) -> None:
-    payload = creds.to_json().encode("utf-8")
+    # Credentials.to_json() serializes `scopes` (what was REQUESTED when the
+    # flow was built), not `granted_scopes` (what the token endpoint actually
+    # returned) — Google supports partial/granular consent, so these can
+    # differ. Persist the real grant separately so a later scope-sufficiency
+    # check isn't fooled by a token that only ever recorded the request.
+    data = json.loads(creds.to_json())
+    if getattr(creds, "granted_scopes", None):
+        data["granted_scopes"] = list(creds.granted_scopes)
+    payload = json.dumps(data).encode("utf-8")
     if not dpapi.protect_to_file(_dpapi_path(), payload, "jarvis-google-token"):
         print(
             "Warning: DPAPI unavailable — storing the Google token unencrypted in "
@@ -74,12 +100,27 @@ def get_credentials(
 ) -> Credentials:
     """Return valid user credentials, refreshing or running the consent flow."""
     creds: Credentials | None = None
+    missing_products: list[str] = []
     token = _load_token()
     if token:
         try:
             creds = Credentials.from_authorized_user_info(token, scopes)
         except ValueError:
             creds = None
+        else:
+            # A refresh token is bound to the scopes granted at consent time —
+            # refreshing it can never add scopes. If config now requires more
+            # than was ever consented to (e.g. Chat/Calendar/Directory added
+            # after an earlier Drive/Gmail-only setup), silently "succeeding"
+            # here would just 403 at call time on the new APIs. Force a fresh
+            # consent instead of a confusing runtime failure. Prefer the real
+            # granted_scopes (falls back to the older "scopes" key for tokens
+            # written before this check existed).
+            granted = set(token.get("granted_scopes") or token.get("scopes") or [])
+            missing = set(scopes) - granted
+            if missing:
+                missing_products = _product_names(missing)
+                creds = None
 
     if creds and creds.valid:
         return creds
@@ -97,8 +138,12 @@ def get_credentials(
             creds = None
 
     if not interactive:
-        from ..paths import cli_hint
-
+        if missing_products:
+            raise GoogleAuthError(
+                "Jarvis needs additional Google permissions you haven't granted "
+                f"yet ({', '.join(missing_products)} access). Run "
+                f"{cli_hint('setup-google')} to re-authorize."
+            )
         raise GoogleAuthError(
             f"Google authorization required. Run {cli_hint('setup-google')} first."
         )
@@ -113,5 +158,15 @@ def get_credentials(
         str(Path(credentials_file).expanduser()), scopes
     )
     creds = flow.run_local_server(port=0, prompt="consent")
+    granted = set(getattr(creds, "granted_scopes", None) or scopes)
+    if not set(scopes).issubset(granted):
+        # Google supports granular consent — the user may have unchecked some
+        # boxes on the consent screen. Catch a partial grant on the very
+        # first run rather than only ever detecting it on a later reload.
+        clear_token()
+        raise GoogleAuthError(
+            "Google authorization was only partially granted — please check every "
+            f"box on the consent screen and run {cli_hint('setup-google')} again."
+        )
     _store_token(creds)
     return creds

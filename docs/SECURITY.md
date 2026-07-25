@@ -22,8 +22,13 @@ layer), not by trusting the model.**
 **Jarvis never holds database credentials or shared service accounts.**
 Every integration acts with the *individual employee's own identity*:
 
-- **Google**: per-user OAuth in the employee's browser; the token lives
-  DPAPI-encrypted in *their* Windows profile.
+- **Google** (Drive, Gmail, Chat, Calendar, Directory): one per-user OAuth
+  consent in the employee's browser covering every app at once; the token
+  lives DPAPI-encrypted in *their* Windows profile. A colleague's calendar
+  free/busy or directory entry is only ever visible through whatever that
+  colleague (or the Workspace admin) already shares — Jarvis has no
+  elevated view of anyone's data beyond what the employee's own account
+  could already see in Google's own apps.
 - **Internal company tools**: Jarvis calls the tool's HTTP API with a
   personal token (`jarvis secrets set tool-<name>-token`). Authorization is
   enforced **server-side by the tool itself** — if the employee's account
@@ -61,7 +66,10 @@ Coarse, human-meaningful capabilities gate each tool family:
 |---|---|
 | `files_read` / `files_write` | local file listing/reading / writing |
 | `drive_read` / `drive_write` | Drive search+read / create+upload |
-| `email_send` | Gmail send |
+| `email_read` / `email_send` / `email_organize` | Gmail search+read / send / archive+label+trash |
+| `chat_read` / `chat_send` | Chat spaces+messages / send a message |
+| `calendar_read` / `calendar_write` | events+free/busy / create+update+delete events |
+| `directory_read` | look up a colleague's email/phone by name |
 | `ai:<name>` | each configured external AI tool, individually |
 | `tool:<name>:read` / `tool:<name>:write` | each internal tool, read and write separately |
 
@@ -146,11 +154,24 @@ and should be stated honestly in any internal security review.
 
 ## What Jarvis deliberately cannot do
 
-- Read the user's mailbox (send-only Gmail scope).
+- Permanently delete anything — Gmail's `gmail.modify` scope explicitly
+  excludes `messages.delete` (trash/untrash only); nothing else it touches
+  has a delete action at all.
+- Change Gmail Settings (filters, forwarding, vacation responder, send-as) —
+  those need separate scopes Jarvis doesn't request.
+- Post rich Chat cards or manage space membership — user-authorized Chat
+  messages are plain text only; membership scopes aren't requested.
+- See a colleague's Calendar *event details* via availability checks —
+  free/busy only ever returns busy/free intervals, never titles or content.
 - Touch files outside the allowlisted directories.
 - Contact AI endpoints that aren't in the company config.
+- Read or act on another employee's Google account, mailbox, chats, or
+  calendar — everything above runs under the individual employee's own OAuth
+  token; there is no shared or admin credential (see the identity model
+  above).
 - Take any side-effecting action without the user hearing a summary and
-  saying yes.
+  saying yes — now including Gmail archive/label/trash/mark-read/unread,
+  Chat sends, and Calendar create/update/delete.
 - Run headless/unattended — it is a foreground, user-session assistant.
 
 ## Known limitations & honest caveats
@@ -170,12 +191,30 @@ and should be stated honestly in any internal security review.
 - **Transcription errors**: STT may mishear a "yes". The confirmation prompt
   includes the payload summary precisely so a mistaken yes is still an
   informed one.
+- **Directory lookup needs a Workspace-admin action** (External Directory
+  Sharing set to org-wide) that Drive/Gmail/Chat/Calendar don't — see the
+  Google Workspace README section. Until IT flips it, `find_colleague`
+  reliably returns empty, which the tool says outright.
+- **Chat message history is now the most injection-exposed surface added**:
+  it's arbitrary text authored by other people, not just the employee, and
+  is wrapped as untrusted data before reaching the model like everything
+  else fetched — but be aware it's a richer attack surface than Drive docs
+  the employee chose to open themselves.
 
 ## IT rollout checklist
 
 - [ ] Google Cloud project owned by the Workspace org; OAuth consent screen
-      **Internal**; Desktop-app client; Drive + Gmail APIs enabled.
+      **Internal**; Desktop-app client; Drive + Gmail + Chat + Calendar +
+      People APIs enabled.
 - [ ] If API access controls are enabled, mark the OAuth client ID trusted.
+- [ ] For colleague lookup: Admin console → Directory → Directory settings →
+      Sharing settings → **External Directory Sharing** → "Organization data
+      and authenticated user basic profile fields" (can take ~24h to propagate).
+- [ ] For Chat send (not read): one-time Cloud Console → APIs & Services →
+      Google Chat API → "Configure the Google Chat API" (app name/icon) — a
+      developer-side step, not a Workspace-admin approval.
+- [ ] Employees who ran `jarvis setup-google` before this scope expansion
+      must re-run it once; Jarvis detects the gap and tells them to.
 - [ ] Pre-bundle model files (openWakeWord `.onnx`, faster-whisper) on
       proxy-locked networks.
 - [ ] Distribute per-user Claude API keys (workspace-scoped, revocable) and

@@ -45,14 +45,33 @@ google:
   # Path to the OAuth client secrets JSON for the company's *internal* Google
   # Cloud app (Desktop type). Internal apps skip Google's verification review.
   credentials_file: ""
-  # Least privilege by default:
-  #   drive.file     — read/write only files Jarvis created or the user picked
-  #   drive.readonly — needed to search/fetch existing company documents
-  #   gmail.send     — send email only; no read access to the mailbox
+  # Least privilege per app, still broad enough to "service" it properly:
+  #   drive.file            — read/write files Jarvis created or the user picked
+  #   drive.readonly        — search/fetch existing company documents
+  #   gmail.modify           — read, send, archive, label, trash mail (superset
+  #                            of send+readonly+labels; excludes permanent
+  #                            delete and Settings — see docs/SECURITY.md)
+  #   chat.spaces.readonly   — list the employee's own Chat spaces/DMs
+  #   chat.messages.readonly — read messages in spaces the employee belongs to
+  #   chat.messages.create   — send a Chat message as the employee
+  #   calendar.readonly      — view events and check free/busy
+  #   calendar.events        — create/update/delete events (invites confirmed)
+  #   directory.readonly     — look up a colleague's email/phone by name
+  #                            (needs a Workspace-admin setting — see below)
+  #
+  # NOTE: if employees already authorized Jarvis under an older/smaller scope
+  # list, expanding this list does NOT retroactively upgrade their stored
+  # token — each employee must re-run `jarvis setup-google` once.
   scopes:
     - https://www.googleapis.com/auth/drive.file
     - https://www.googleapis.com/auth/drive.readonly
-    - https://www.googleapis.com/auth/gmail.send
+    - https://www.googleapis.com/auth/gmail.modify
+    - https://www.googleapis.com/auth/chat.spaces.readonly
+    - https://www.googleapis.com/auth/chat.messages.readonly
+    - https://www.googleapis.com/auth/chat.messages.create
+    - https://www.googleapis.com/auth/calendar.readonly
+    - https://www.googleapis.com/auth/calendar.events
+    - https://www.googleapis.com/auth/directory.readonly
 
 files:
   # Local directories Jarvis may read from / write to. Anything outside these

@@ -2,9 +2,10 @@
 
 Jarvis is a voice assistant that runs on employees' Windows machines and helps
 with daily operations: finding and reading documents (local and Google Drive),
-saving files, sending email, and consulting the company's approved external AI
-tools — **always with the user's explicit permission, and with every action
-audited.**
+Gmail (read/send/organize), Google Chat, Calendar, looking up colleagues in
+the company directory, and consulting the company's approved external AI
+tools and internal systems — **always with the user's explicit permission,
+scoped to their own access level, and with every action audited.**
 
 Say **"Hey Jarvis"**, ask for what you need, and confirm anything that has a
 side effect before it happens.
@@ -71,20 +72,37 @@ jarvis --text
 jarvis
 ```
 
-### Google Drive & Gmail
+### Google Workspace (Drive, Gmail, Chat, Calendar, Directory)
 
 1. In Google Cloud Console (project owned by the company Workspace), create an
    OAuth client of type **Desktop app**, set the consent screen to
    **Internal** (internal apps skip Google's verification review), and enable
-   the **Drive** and **Gmail** APIs.
+   the **Drive**, **Gmail**, **Google Chat**, **Calendar**, and **People**
+   APIs.
 2. Point `google.credentials_file` in your config at the downloaded client
    secrets JSON.
 3. Run `jarvis setup-google` — a browser opens; the employee signs in with
    their company account. Jarvis never sees the password; the token is stored
-   DPAPI-encrypted for that Windows user only.
+   DPAPI-encrypted for that Windows user only. **One consent covers every
+   Google app at once.**
+4. **Only for colleague lookup ("find X's email")**: a Workspace admin must
+   set Admin console → Directory → Directory settings → Sharing settings →
+   **External Directory Sharing** to "Organization data and authenticated
+   user basic profile fields". Without this, lookups return empty no matter
+   how correctly everything else is set up — Drive/Gmail/Chat/Calendar need
+   no equivalent admin step.
 
-Default scopes are least-privilege: `drive.file` + `drive.readonly` +
-`gmail.send` (no mailbox read access). See `jarvis/defaults.yaml`.
+Scopes are declared in `jarvis/defaults.yaml`: `drive.file` + `drive.readonly`
+for Drive; `gmail.modify` for Gmail (read + send + archive/label/trash —
+deliberately excludes permanent delete and Settings); narrow Chat scopes
+(`chat.spaces.readonly` + `chat.messages.readonly` + `chat.messages.create`);
+`calendar.readonly` + `calendar.events` for Calendar (covers free/busy too);
+`directory.readonly` for colleague lookup.
+
+**If employees already ran `jarvis setup-google` before this scope list grew**,
+each of them needs to run it once more — expanding scopes doesn't retroactively
+upgrade an already-issued token. Jarvis detects the mismatch itself and tells
+the employee to re-authorize rather than failing mysteriously.
 
 ### External AI tools
 
@@ -147,6 +165,16 @@ size, TTS voice, the Claude model/effort, and the approved AI-tool list.
   one-time Windows Firewall prompts.
 - Workspace admins using API access controls must mark the internal OAuth
   client as trusted, or employees will see "app blocked".
+
+## What each Google integration can do
+
+| App | Read | Write (always confirmed aloud) |
+|---|---|---|
+| **Drive** | search + read your files | create/upload files |
+| **Gmail** | search + read your inbox | send · archive/label/trash (incl. mark read/unread) |
+| **Chat** | list spaces/DMs + read messages in them | send a plain-text message |
+| **Calendar** | view events + check free/busy (yours or a colleague's — busy/free only, never event details) | create/update/delete events (attendees get emailed) |
+| **Directory** | look up a colleague's email/phone by name | — |
 
 ## Project layout
 

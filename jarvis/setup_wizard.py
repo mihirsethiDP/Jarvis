@@ -41,8 +41,22 @@ def capability_specs(config: Config) -> list[tuple[str, str, str]]:
          "search and read documents in your Google Drive"),
         ("drive_write", "Google Drive — write",
          "create files in / upload files to your Google Drive"),
+        ("email_read", "Gmail — read",
+         "search and read your inbox"),
         ("email_send", "Gmail — send",
          "send email from your account (every send is read back and confirmed)"),
+        ("email_organize", "Gmail — organize",
+         "archive, label, or trash mail (every change is confirmed, incl. mark read/unread)"),
+        ("chat_read", "Google Chat — read",
+         "see your Chat spaces, DMs, and messages in them"),
+        ("chat_send", "Google Chat — send",
+         "send Chat messages as you (every message is confirmed)"),
+        ("calendar_read", "Calendar — read",
+         "view your events and check free/busy for you or colleagues"),
+        ("calendar_write", "Calendar — write",
+         "create, change, or delete events (every change is confirmed — attendees get emailed)"),
+        ("directory_read", "Company directory — read",
+         "look up a colleague's email or phone number by name"),
     ]
     for t in config.ai_tools:
         specs.append((f"ai:{t.name}", f"External AI — {t.name}",
@@ -110,7 +124,8 @@ def run_setup(
     print(
         "\nNext steps:\n"
         f"  - Claude API key:        {cli_hint('secrets set anthropic')}\n"
-        f"  - Google authorization:  {cli_hint('setup-google')}  (if Drive/Gmail allowed)\n"
+        f"  - Google authorization:  {cli_hint('setup-google')}  "
+        "(if any Drive/Gmail/Chat/Calendar/Directory access was allowed)\n"
         + "".join(
             f"  - Connect {it.name}:  {cli_hint(f'secrets set tool-{it.name}-token')}\n"
             for it in config.internal_tools

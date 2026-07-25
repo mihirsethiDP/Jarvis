@@ -24,8 +24,11 @@ def test_specs_cover_configured_tools():
 def test_wizard_records_decisions(tmp_path, audit, monkeypatch):
     monkeypatch.setattr("jarvis.setup_wizard.app_data_dir", lambda: tmp_path)
     cfg = Config(raw={})
-    # 5 built-in capabilities: allow, deny, ask, gibberish-then-deny, allow
-    io = FakeIO(["allow", "deny", "", "whatever", "deny", "a"])
+    total = len(capability_specs(cfg))
+    # First 5 capabilities: allow, deny, ask, gibberish-then-deny, allow.
+    # Everything after (Chat/Calendar/Directory/etc.) just takes the default.
+    answers = ["allow", "deny", "", "whatever", "deny", "a"] + ["ask"] * (total - 5)
+    io = FakeIO(answers)
     pm = PermissionManager(io, audit, store_path=tmp_path / "perms.json")
 
     decisions = run_setup(cfg, io=io, pm=pm)
@@ -34,7 +37,8 @@ def test_wizard_records_decisions(tmp_path, audit, monkeypatch):
     assert decisions["files_write"] == "denied"
     assert decisions["drive_read"] == "ask"
     assert decisions["drive_write"] == "denied"   # gibberish re-asked, then denied
-    assert decisions["email_send"] == "always"
+    assert decisions["email_read"] == "always"
+    assert len(decisions) == total
     assert (tmp_path / "setup_done").exists()
 
     # Standing decisions behave correctly at runtime.
@@ -73,9 +77,11 @@ def test_eof_aborts_wizard_without_marker(tmp_path, audit, monkeypatch):
 def test_bare_yes_is_not_accepted(tmp_path, audit, monkeypatch):
     monkeypatch.setattr("jarvis.setup_wizard.app_data_dir", lambda: tmp_path)
     cfg = Config(raw={})
-    # "yes" must re-prompt; then explicit answers finish the wizard.
-    io = FakeIO(["yes", "allow", "ask", "ask", "ask", "deny"])
+    total = len(capability_specs(cfg))
+    # "yes" must re-prompt (it's not allow/ask/deny); then explicit answers finish it.
+    answers = ["yes", "allow"] + ["ask"] * (total - 1)
+    io = FakeIO(answers)
     pm = PermissionManager(io, audit, store_path=tmp_path / "perms.json")
     decisions = run_setup(cfg, io=io, pm=pm)
     assert decisions["files_read"] == "always"
-    assert decisions["email_send"] == "denied"
+    assert len(decisions) == total
