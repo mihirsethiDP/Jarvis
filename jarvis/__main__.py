@@ -8,6 +8,8 @@
     jarvis secrets set NAME    store a secret in the Windows keyring
     jarvis permissions list    show persistent grants
     jarvis permissions revoke CAPABILITY
+    jarvis memory list         show what Jarvis remembers about you
+    jarvis memory forget ID    delete one remembered fact
     jarvis audit [-n N] [--verify]
 """
 
@@ -58,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
     perm = sub.add_parser("permissions", help="Review or revoke capability grants")
     perm.add_argument("action", choices=["list", "revoke"])
     perm.add_argument("capability", nargs="?", default="")
+
+    mem = sub.add_parser("memory", help="Review or delete what Jarvis remembers")
+    mem.add_argument("action", choices=["list", "forget", "clear"])
+    mem.add_argument("fact_id", nargs="?", default="")
 
     aud = sub.add_parser("audit", help="Show or verify the audit log")
     aud.add_argument("-n", type=int, default=20, help="How many entries to show")
@@ -123,6 +129,55 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         removed = pm.revoke(args.capability)
         print("Revoked." if removed else "No such persistent grant.")
+        return 0
+
+    if args.cmd == "memory":
+        from .memory import MemoryStore
+        from .security import AuditLog
+
+        store = MemoryStore()
+        log = AuditLog(anchored=True)
+        if args.action == "list":
+            facts = store.all()
+            if not facts:
+                print("Jarvis hasn't remembered anything yet.")
+                return 0
+            live = store.live_ids()
+            for fact in facts:
+                # Stored-but-not-injected facts would otherwise look active.
+                marker = " " if fact.id in live else " (stored, not currently used)"
+                print(f"  [{fact.id}] ({fact.category}) {fact.text}"
+                      f"   — {fact.created[:10]}{marker}")
+            if len(live) < len(facts):
+                print(f"\n{len(live)} of {len(facts)} facts fit in the per-turn "
+                      "memory budget; the rest are kept but not shown to Jarvis.")
+            return 0
+        if args.action == "forget":
+            if not args.fact_id:
+                print("Usage: jarvis memory forget <id>   (see: jarvis memory list)")
+                return 1
+            removed = store.forget(args.fact_id)
+            if removed:
+                log.record("memory", tool="forget", detail=removed.id, decision="cli")
+                print(f'Forgot: "{removed.text}"')
+                return 0
+            print("No such fact id.")
+            return 1
+        if args.fact_id:
+            print("`memory clear` takes no id. Did you mean: "
+                  f"jarvis memory forget {args.fact_id}")
+            return 1
+        pending = len(store.all())
+        if not pending:
+            print("Nothing to clear.")
+            return 0
+        answer = input(f"Delete all {pending} remembered fact(s)? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Cancelled.")
+            return 1
+        count = store.clear()
+        log.record("memory", tool="clear", detail=f"{count} facts", decision="cli")
+        print(f"Cleared {count} remembered fact(s).")
         return 0
 
     if args.cmd == "audit":

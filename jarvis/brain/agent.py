@@ -13,6 +13,7 @@ from typing import Callable
 import anthropic
 
 from ..config import Config
+from ..memory import MemoryStore
 from ..security import AuditLog
 from .prompts import build_system_prompt
 
@@ -25,16 +26,34 @@ class JarvisAgent:
         audit: AuditLog,
         *,
         on_status: Callable[[str], None] | None = None,
+        memory: MemoryStore | None = None,
+        recall_check: Callable[[], bool] | None = None,
     ):
         self.config = config
         self.tools = tools
         self.audit = audit
         self.on_status = on_status or (lambda _state: None)
         self.client = anthropic.Anthropic()
-        self.system_prompt = build_system_prompt(
-            str(config.get("assistant.name", "Jarvis"))
-        )
+        self.name = str(config.get("assistant.name", "Jarvis"))
+        self.memory = memory
+        self._recall_check = recall_check or (lambda: True)
+        self._recall_decision: bool | None = None
         self.messages: list[dict] = []
+
+    def _may_recall(self) -> bool:
+        """Ask once per session, and only if there is actually something to
+        recall — so a fresh install never prompts about an empty memory."""
+        if self.memory is None or not self.memory.all():
+            return False
+        if self._recall_decision is None:
+            self._recall_decision = bool(self._recall_check())
+        return self._recall_decision
+
+    def _system_prompt(self) -> str:
+        """Rebuilt per turn so newly remembered facts — and revocations made
+        from a console — take effect immediately."""
+        block = self.memory.as_prompt_block() if self._may_recall() else ""
+        return build_system_prompt(self.name, block)
 
     # ------------------------------------------------------------------
     def run_turn(self, user_text: str) -> str:
@@ -74,7 +93,7 @@ class JarvisAgent:
         runner = self.client.beta.messages.tool_runner(
             model=self.config.model,
             max_tokens=self.config.max_tokens,
-            system=self.system_prompt,
+            system=self._system_prompt(),
             thinking={"type": "adaptive"},
             output_config={"effort": self.config.effort},
             tools=self.tools,

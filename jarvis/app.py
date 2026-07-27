@@ -8,6 +8,7 @@ import sys
 from .brain import JarvisAgent
 from .config import Config
 from .io_channel import IOChannel, TextIO, VoiceIO
+from .memory import MemoryStore
 from .paths import cli_hint
 from .security import AuditLog, Confirmer, PermissionManager
 from .security import secrets as secret_store
@@ -72,12 +73,24 @@ class JarvisApp:
         # so no config edit (or prompt-injected "helpful suggestion") can
         # disable the human-in-the-loop gate.
         self.confirmer = Confirmer(io, self.audit)
+        self.memory = MemoryStore()
         ctx = ToolContext(
             config=config, permissions=self.permissions,
-            confirmer=self.confirmer, audit=self.audit,
+            confirmer=self.confirmer, audit=self.audit, memory=self.memory,
         )
+        if (self.permissions.denied("memory_recall")
+                and not self.permissions.denied("memory_write")):
+            print("Note: you denied memory recall but allowed remembering — Jarvis "
+                  "will store facts it never uses. Consider denying both, or "
+                  f"allowing recall: {cli_hint('setup')}")
         self.agent = JarvisAgent(
-            config, build_all_tools(ctx), self.audit, on_status=self._publish
+            config, build_all_tools(ctx), self.audit, on_status=self._publish,
+            memory=self.memory,
+            # Asked once per session, and only when memory is non-empty, so a
+            # standing denial blocks injection and "ask" genuinely asks.
+            recall_check=lambda: self.permissions.require(
+                "memory_recall", "use what it remembered about you earlier"
+            ),
         )
         self.io: IOChannel = io
 

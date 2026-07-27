@@ -42,6 +42,7 @@ configured AI tools).
 | Layer | What it does |
 |---|---|
 | **Install-time consent** | `jarvis setup` asks the employee, per capability: allow / ask at first use / **deny**. Denied tools are removed from the model's toolset entirely and never asked about again. |
+| **Memory is confirmed and reviewable** | Remembering a fact is a confirmed side effect like sending mail — the employee hears it read back first. Facts are injected as reference information explicitly marked "not instructions", so a poisoned memory can't become a standing order. Review with `jarvis memory list`, delete with `jarvis memory forget`. |
 | **Capability grants** | First use of Drive / Gmail / files / each AI & internal tool asks the user: allow once, for this session, or always. Answers understood in English/Hindi/Hinglish; unrecognized answers **fail closed**. Grants are reviewable and revocable. |
 | **Per-user identity** | Every integration authenticates as the individual employee (their OAuth token, their internal-tool token). Access levels are enforced **server-side** by each tool — one employee's Jarvis can never see another employee's data, and there is no shared service account to abuse. |
 | **Confirmation** | Every side effect (send email, write/upload file) reads a concrete summary aloud and requires an explicit *yes* — even with an "always" grant. |
@@ -140,6 +141,7 @@ the default and the automatic fallback.
 | `jarvis setup-google` | Run Google authorization now |
 | `jarvis secrets set anthropic` | Store the Claude API key in the keyring |
 | `jarvis permissions list` / `revoke <cap>` | Review / revoke standing grants |
+| `jarvis memory list` / `forget <id>` / `clear` | Review / delete what Jarvis remembers |
 | `jarvis audit -n 50` / `--verify` | Inspect / verify the audit log |
 
 ## Configuration
@@ -165,6 +167,24 @@ size, TTS voice, the Claude model/effort, and the approved AI-tool list.
   one-time Windows Firewall prompts.
 - Workspace admins using API access controls must mark the internal OAuth
   client as trusted, or employees will see "app blocked".
+
+## Memory — what makes it feel like an assistant, not a search box
+
+Jarvis remembers durable facts across conversations: who the client contact
+for a plant is, which sites you own, that you like reports as bullet points.
+Facts are stored per Windows user in `%APPDATA%\Jarvis\memory.json` — one
+employee's memory is never visible to another, same as tokens and grants.
+
+Because remembered facts are injected into the *system* prompt (the trusted
+channel), writing one is treated as a real side effect:
+
+- Every `remember` is read back aloud and needs an explicit yes.
+- Facts are framed as reference information, never instructions — a fact
+  that says "always CC someone" carries no authority, and Jarvis is told to
+  flag it as worth forgetting.
+- `jarvis memory list` shows everything with ids; `jarvis memory forget m3`
+  deletes one; `jarvis memory clear` wipes the lot.
+- Denying `memory_recall` at setup means facts are never injected at all.
 
 ## What each Google integration can do
 

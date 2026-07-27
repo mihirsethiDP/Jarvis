@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import Config
+from ..memory import MemoryStore
 from ..security import AuditLog, Confirmer, PermissionManager
 
 
@@ -31,6 +32,9 @@ class ToolContext:
     permissions: PermissionManager
     confirmer: Confirmer
     audit: AuditLog
+    # No default: a context built without an explicit store would silently
+    # bind to the live employee's %APPDATA% memory file (tests included).
+    memory: MemoryStore | None = None
     _services: dict[str, Any] = field(default_factory=dict)
 
     def google_service(self, api: str, version: str):
@@ -102,12 +106,16 @@ _TOOL_CAPABILITIES = {
     "create_calendar_event": "calendar_write",
     "delete_calendar_event": "calendar_write",
     "find_colleague": "directory_read",
+    "remember": "memory_write",
+    # forget_fact is deliberately absent: revocation must survive a standing
+    # denial of memory_write, so it is never filtered out of the toolset.
 }
 
 
 def build_all_tools(ctx: ToolContext) -> list:
     """Assemble the tool list for the agent, honoring standing denials."""
-    from . import ai_bridge, gcalendar, gchat, gcontacts, gdrive, gmail, internal, local_files
+    from . import (ai_bridge, gcalendar, gchat, gcontacts, gdrive, gmail,
+                   internal, local_files, memory_tools)
 
     tools: list = []
     tools += local_files.build_tools(ctx)
@@ -116,6 +124,8 @@ def build_all_tools(ctx: ToolContext) -> list:
     tools += gchat.build_tools(ctx)
     tools += gcalendar.build_tools(ctx)
     tools += gcontacts.build_tools(ctx)
+    if ctx.memory is not None:
+        tools += memory_tools.build_tools(ctx)
     tools = [
         t for t in tools
         if not ctx.permissions.denied(_TOOL_CAPABILITIES.get(t.name, ""))

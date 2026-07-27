@@ -9,9 +9,14 @@ assistant:
 
 brain:
   model: claude-opus-4-8
-  # low | medium | high — voice interactions favor low (terse, fast).
-  effort: low
-  max_tokens: 4096
+  # low | medium | high. Thinking is adaptive, so simple questions stay fast
+  # regardless — this mainly sets the ceiling for how hard Jarvis may work on
+  # a request that spans several systems. Drop to "low" if voice replies feel
+  # sluggish and you mostly ask simple lookups.
+  effort: medium
+  # Room for multi-tool work (search mail, check calendar, query a plant
+  # system, then reason across all three) plus the reply itself.
+  max_tokens: 8192
   # How many previous exchanges to keep in the conversation window.
   max_history_turns: 20
 

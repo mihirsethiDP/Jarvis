@@ -57,6 +57,10 @@ def capability_specs(config: Config) -> list[tuple[str, str, str]]:
          "create, change, or delete events (every change is confirmed — attendees get emailed)"),
         ("directory_read", "Company directory — read",
          "look up a colleague's email or phone number by name"),
+        ("memory_recall", "Memory — recall",
+         "use things it remembered in earlier conversations"),
+        ("memory_write", "Memory — remember",
+         "remember new facts between conversations (each one is confirmed first)"),
     ]
     for t in config.ai_tools:
         specs.append((f"ai:{t.name}", f"External AI — {t.name}",
