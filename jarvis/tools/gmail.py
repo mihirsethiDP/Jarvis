@@ -159,28 +159,53 @@ def build_tools(ctx: ToolContext) -> list:
             return f"Reading the email failed: {e}"
 
     @beta_tool
-    def send_email(to: str, subject: str, body: str, cc: str = "") -> str:
-        """Send an email from the user's Gmail account. The user hears the
-        recipient and subject and must explicitly confirm before anything is sent.
+    def send_email(to: str, subject: str, body: str, cc: str = "", attach_path: str = "") -> str:
+        """Send an email from the user's Gmail account, optionally attaching a
+        local file. The user hears the recipient, subject, and any attachment
+        and must explicitly confirm before anything is sent.
 
         Args:
             to: Recipient email address (comma-separate multiple addresses).
             subject: Email subject line.
             body: Plain-text body of the email.
             cc: Optional CC addresses, comma-separated.
+            attach_path: Optional path of a local file (within the allowed
+                folders, e.g. the user's Desktop) to attach.
         """
         if not ctx.permissions.require("email_send", "send email from your Gmail account"):
             return "The user declined email access."
+
+        attachment = None
+        if attach_path:
+            from .local_files import PathNotAllowed, resolve_safe
+
+            try:
+                attachment = resolve_safe(ctx, attach_path)
+            except PathNotAllowed as e:
+                ctx.audit.record("tool_call", tool="send_email", detail=attach_path,
+                                 decision="blocked_path", ok=False)
+                return f"Blocked: {e}"
+            if not attachment.is_file():
+                return f"'{attachment}' does not exist or is not a file."
+            if attachment.stat().st_size > 20_000_000:
+                return (f"'{attachment.name}' is "
+                        f"{attachment.stat().st_size // 1_000_000} MB — too large to "
+                        "email (Gmail caps attachments around 25 MB). Try sharing it "
+                        "via Drive instead.")
 
         preview = body if len(body) <= 200 else body[:200] + "…"
         summary = (
             f"I will send an email to {to}"
             + (f" (cc {cc})" if cc else "")
-            + f' with the subject "{subject}". It begins: "{preview}".'
+            + f' with the subject "{subject}"'
+            + (f", attaching {attachment.name} "
+               f"({max(1, attachment.stat().st_size // 1024)} KB)" if attachment else "")
+            + f'. It begins: "{preview}".'
         )
         result = ctx.confirmer.confirm(
             "send_email", summary,
-            audit_detail=f'to={to} cc={cc} subject="{subject}"',  # no body in the log
+            audit_detail=(f'to={to} cc={cc} subject="{subject}"'
+                          + (f" attach={attachment.name}" if attachment else "")),
         )
         if not result:
             return cancelled_by_user(result, "sending the email")
@@ -192,6 +217,13 @@ def build_tools(ctx: ToolContext) -> list:
                 msg["Cc"] = cc
             msg["Subject"] = subject
             msg.set_content(body)
+            if attachment:
+                import mimetypes
+
+                ctype, _ = mimetypes.guess_type(attachment.name)
+                maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
+                msg.add_attachment(attachment.read_bytes(), maintype=maintype,
+                                   subtype=subtype, filename=attachment.name)
             encoded = base64.urlsafe_b64encode(msg.as_bytes()).decode()
             _gmail().users().messages().send(userId="me", body={"raw": encoded}).execute()
             ctx.audit.record("tool_call", tool="send_email",

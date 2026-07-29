@@ -33,6 +33,14 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    # Piped/redirected console output defaults to the ANSI codepage (cp1252)
+    # on Windows, which can't encode Devanagari — Hindi replies would crash
+    # the print. Force UTF-8, degrading unprintable glyphs instead of dying.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = argparse.ArgumentParser(prog="jarvis", description="Jarvis voice assistant")
     parser.add_argument("--config", help="Path to a config YAML override", default=None)
     parser.add_argument("--text", action="store_true", help="Console chat mode (no mic)")

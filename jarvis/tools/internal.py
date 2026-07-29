@@ -144,6 +144,10 @@ def _execute(
             json=body or None,
             headers=headers,
             timeout=_TIMEOUT,
+            # Some backends answer through a redirect (Google Apps Script's
+            # /exec 302s to googleusercontent.com); httpx doesn't follow by
+            # default, which would silently return the empty redirect body.
+            follow_redirects=True,
         )
     except httpx.HTTPError as e:
         ctx.audit.record("tool_call", tool=f"{tool.name}:{action.name}",

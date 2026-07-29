@@ -213,3 +213,50 @@ def test_declined_send_relays_the_correction_to_the_model(tmp_path, audit):
     assert "priya instead" in out          # the correction rides back
     assert "adjust the action" in out      # with instructions to retry
     service.users().messages().send.assert_not_called()
+
+
+def _attach_ctx(tmp_path, audit, answers, service):
+    io = FakeIO(answers)
+    pm = PermissionManager(io, audit, store_path=tmp_path / "perms.json")
+    docs = tmp_path / "docs"; docs.mkdir()
+    cfg = Config(raw={"files": {"allowed_dirs": [str(docs)]}})
+    ctx = ToolContext(config=cfg, permissions=pm,
+                      confirmer=Confirmer(io, audit), audit=audit)
+    ctx.google_service = lambda api, version: service
+    return ctx, docs, io
+
+
+def test_send_email_with_attachment_from_allowed_dir(tmp_path, audit):
+    service = MagicMock()
+    ctx, docs, io = _attach_ctx(tmp_path, audit, ["allow once", "yes"], service)
+    report = docs / "report.pdf"
+    report.write_bytes(b"%PDF-1.4 fake")
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["send_email"]("priya@x.com", "Report", "attached.", attach_path=str(report))
+    assert "sent" in out.lower()
+    # the confirmation must name the attachment
+    assert any("report.pdf" in q for q in io.asked)
+    # and the MIME payload must actually contain it
+    _, kwargs = service.users().messages().send.call_args
+    raw = base64.urlsafe_b64decode(kwargs["body"]["raw"] + "===")
+    assert b"report.pdf" in raw and b"%PDF-1.4" not in raw[:200]  # attached, not inline
+
+
+def test_attachment_outside_allowlist_is_blocked(tmp_path, audit):
+    service = MagicMock()
+    ctx, docs, _ = _attach_ctx(tmp_path, audit, ["allow once"], service)
+    secret = tmp_path / "outside.txt"
+    secret.write_text("secret")
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["send_email"]("x@y.com", "S", "b", attach_path=str(secret))
+    assert "Blocked" in out
+    service.users().messages().send.assert_not_called()
+
+
+def test_missing_attachment_is_reported(tmp_path, audit):
+    service = MagicMock()
+    ctx, docs, _ = _attach_ctx(tmp_path, audit, ["allow once"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["send_email"]("x@y.com", "S", "b", attach_path=str(docs / "nope.pdf"))
+    assert "does not exist" in out
+    service.users().messages().send.assert_not_called()
