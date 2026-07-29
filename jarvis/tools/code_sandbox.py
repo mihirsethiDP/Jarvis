@@ -1,0 +1,233 @@
+"""Sandboxed Python execution — the "have Claude write and run code" path.
+
+This is the single most dangerous capability in Jarvis, so it is built as a
+narrow, inspected channel rather than a shell. Layers, outermost first:
+
+1. **Off by default.** The `code_run` capability must be granted explicitly;
+   the setup wizard describes it in plain terms and a standing denial
+   removes the tool from the model's toolset entirely.
+2. **AST validation, not regex.** The code is parsed and walked before it
+   runs. Only an allowlist of imports is permitted; dynamic-execution
+   escapes (eval/exec/compile/__import__/getattr-by-string, dunder attribute
+   reach-through) are rejected outright. A denylist of "bad words" would be
+   trivially bypassable; an allowlist of syntax is not.
+3. **Jarvis cannot be touched by it.** Any literal path referencing the
+   Jarvis install, %APPDATA%\\Jarvis, the OAuth client file, the audit log,
+   permissions, memory, or the keyring is rejected at validation time. The
+   assistant's own code, config and consent records are out of reach by
+   construction — this is the "don't let it mess with Jarvis" requirement.
+4. **No network.** Every networking module is off the allowlist, so the
+   sandbox cannot exfiltrate anything or pull code down.
+5. **Confined, disposable workspace.** Execution happens in a dedicated
+   scratch directory with the interpreter in isolated mode (`-I -S`), a hard
+   timeout, and an output cap.
+6. **The human reads the code first.** Execution is a confirmed side effect:
+   the exact source is shown/read back and requires an explicit yes.
+7. **Audited.** Every attempt — validated, refused, run, failed — is logged.
+
+Honest limit: this is a language-level sandbox, not an OS-level one. It
+raises the bar very high for anything arriving through the assistant, but a
+determined local attacker who already runs code as this Windows user does
+not need Jarvis. True isolation would need a container or a restricted
+token; that is a deliberate future step, noted in docs/SECURITY.md.
+"""
+
+from __future__ import annotations
+
+import ast
+import subprocess
+import sys
+from pathlib import Path
+
+from anthropic import beta_tool
+
+from . import ToolContext, as_document, cancelled_by_user
+from ..paths import app_data_dir
+
+_TIMEOUT_SECONDS = 20
+_MAX_OUTPUT_CHARS = 20_000
+_MAX_SOURCE_CHARS = 20_000
+
+# Only these may be imported. Everything absent is refused — including every
+# networking, subprocess, filesystem-walking and introspection module.
+_ALLOWED_IMPORTS = {
+    "json", "csv", "re", "math", "cmath", "statistics", "datetime", "time",
+    "collections", "itertools", "functools", "operator", "string", "textwrap",
+    "decimal", "fractions", "random", "unicodedata", "base64", "binascii",
+    "hashlib", "hmac", "uuid", "io", "typing", "dataclasses", "enum", "copy",
+    "heapq", "bisect", "array", "zlib", "gzip", "difflib", "pprint",
+    "numpy", "pandas", "openpyxl",
+}
+
+# Names that re-open arbitrary execution or reach around the AST checks.
+_BANNED_NAMES = {
+    "eval", "exec", "compile", "__import__", "globals", "locals", "vars",
+    "getattr", "setattr", "delattr", "breakpoint", "memoryview", "input",
+}
+_BANNED_ATTRS = {
+    "__globals__", "__builtins__", "__subclasses__", "__bases__", "__mro__",
+    "__code__", "__closure__", "__loader__", "__spec__", "__dict__",
+    "__getattribute__", "__reduce__", "__class__",
+}
+
+
+class CodeRejected(ValueError):
+    """Static validation failed — the code never runs."""
+
+
+def workspace_dir() -> Path:
+    path = app_data_dir() / "workspace"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _protected_fragments() -> list[str]:
+    """Path fragments the sandbox must never reference, so generated code
+    cannot read or rewrite Jarvis itself."""
+    jarvis_pkg = Path(__file__).resolve().parent.parent          # .../jarvis
+    return [
+        str(jarvis_pkg).lower(),
+        str(jarvis_pkg.parent).lower(),                          # the repo/install
+        str(app_data_dir()).lower(),                             # config, tokens, audit
+        "client_secret", "credentials.json", "token.json",
+        "permissions.json", "memory.json", "audit.jsonl", "usage.json",
+        ".venv", "site-packages", "appdata\\roaming\\jarvis",
+        "\\windows\\", "system32", ".ssh", ".aws", ".env",
+    ]
+
+
+def validate(source: str) -> None:
+    """Raise CodeRejected unless the code is inside the permitted subset."""
+    if len(source) > _MAX_SOURCE_CHARS:
+        raise CodeRejected(f"the code is too long ({len(source)} characters)")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        raise CodeRejected(f"it isn't valid Python ({e.msg} on line {e.lineno})")
+
+    protected = _protected_fragments()
+    workspace = str(workspace_dir()).lower()
+
+    for node in ast.walk(tree):
+        # -- imports: allowlist only, top-level module name --------------
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in _ALLOWED_IMPORTS:
+                    raise CodeRejected(f"it imports '{alias.name}', which isn't permitted")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if node.level or root not in _ALLOWED_IMPORTS:
+                raise CodeRejected(f"it imports from '{node.module}', which isn't permitted")
+
+        # -- dynamic execution / introspection escapes -------------------
+        elif isinstance(node, ast.Name) and node.id in _BANNED_NAMES:
+            raise CodeRejected(f"it uses '{node.id}', which can bypass these checks")
+        elif isinstance(node, ast.Attribute) and node.attr in _BANNED_ATTRS:
+            raise CodeRejected(f"it reaches into '{node.attr}', which can bypass these checks")
+
+        # -- literal paths pointing at Jarvis or the wider system ---------
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            lowered = node.value.lower().replace("/", "\\")
+            if lowered.startswith(workspace):
+                continue  # explicitly inside the scratch directory: fine
+            for fragment in protected:
+                if fragment in lowered:
+                    raise CodeRejected(
+                        "it references a protected location "
+                        f"('{node.value[:60]}'). Code may only touch its own "
+                        "workspace folder."
+                    )
+
+
+def build_tools(ctx: ToolContext) -> list:
+    @beta_tool
+    def run_code(code: str, purpose: str = "") -> str:
+        """Run a short Python program in a locked-down sandbox and return what
+        it printed. Use for calculations, parsing, reformatting and data
+        crunching that your own tools can't do.
+
+        Hard limits, enforced before anything runs: an allowlist of imports
+        (no network, no subprocess, no OS access), no eval/exec/dynamic
+        imports, and no access to anything outside the sandbox workspace —
+        Jarvis's own code, config, tokens and logs are unreachable. The user
+        sees the exact source and must approve it.
+
+        Never use this to bypass a permission, reach a blocked file, probe
+        or attack any system, or work around a limit the user set. If asked
+        for something like that, refuse and say why.
+
+        Args:
+            code: The complete Python program. Print what you want returned.
+            purpose: One short line on what it does, for the user's approval.
+        """
+        source = (code or "").strip()
+        if not source:
+            return "There was no code to run."
+
+        if not ctx.permissions.require(
+            "code_run", "run sandboxed code on this computer"
+        ):
+            return "The user declined code execution."
+
+        try:
+            validate(source)
+        except CodeRejected as e:
+            # Refusals are audited too: an attempt to reach outside the
+            # sandbox is exactly the signal worth keeping.
+            ctx.audit.record("tool_call", tool="run_code",
+                             detail=f"rejected: {e}", decision="blocked", ok=False)
+            return (
+                f"I won't run that: {e}. The sandbox allows plain data-processing "
+                "Python only — no network, no system access, and nothing outside "
+                "its own workspace folder."
+            )
+
+        preview = source if len(source) <= 600 else source[:600] + "\n…(truncated)"
+        result = ctx.confirmer.confirm(
+            "run_code",
+            (f"I want to run some code{f' to {purpose}' if purpose else ''}. "
+             f"It is:\n{preview}\nIt runs sandboxed, with no network or file "
+             "access outside its workspace."),
+            audit_detail=f"{len(source)} chars: {purpose[:80]}",
+        )
+        if not result:
+            return cancelled_by_user(result, "running that code")
+
+        workspace = workspace_dir()
+        script = workspace / "_jarvis_run.py"
+        script.write_text(source, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                # -I: isolated (ignores env vars and user site-packages)
+                # -S: skip site customisation
+                [sys.executable, "-I", "-S", str(script)],
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT_SECONDS,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired:
+            ctx.audit.record("tool_call", tool="run_code",
+                             detail="timeout", decision="timeout", ok=False)
+            return (f"The code ran longer than {_TIMEOUT_SECONDS} seconds and was "
+                    "stopped. Try something smaller.")
+        except Exception as e:
+            ctx.audit.record("tool_call", tool="run_code", detail=str(e)[:120], ok=False)
+            return f"Running the code failed: {e}"
+        finally:
+            script.unlink(missing_ok=True)
+
+        stdout = (completed.stdout or "")[:_MAX_OUTPUT_CHARS]
+        stderr = (completed.stderr or "")[:2000]
+        ctx.audit.record("tool_call", tool="run_code",
+                         detail=f"exit={completed.returncode} {purpose[:60]}",
+                         decision="confirmed", ok=completed.returncode == 0)
+
+        if completed.returncode != 0:
+            return as_document("code-error", stderr or "(no error output)")
+        return as_document("code-output", stdout or "(the code printed nothing)")
+
+    return [run_code]

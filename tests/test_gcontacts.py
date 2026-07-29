@@ -45,3 +45,32 @@ def test_empty_result_hints_at_admin_dependency(tmp_path, audit):
     tools = {t.name: t for t in gcontacts_mod.build_tools(ctx)}
     out = tools["find_colleague"]("Nobody")
     assert "External Directory Sharing" in out
+
+
+def test_multiple_matches_forces_a_disambiguation_prompt(tmp_path, audit):
+    service = MagicMock()
+    service.people().searchDirectoryPeople.return_value.execute.return_value = {
+        "people": [
+            {"names": [{"displayName": "Priya Rao"}],
+             "emailAddresses": [{"value": "priya.rao@digitalpaani.com"}]},
+            {"names": [{"displayName": "Priya Nair"}],
+             "emailAddresses": [{"value": "priya.nair@digitalpaani.com"}]},
+        ]
+    }
+    ctx = make_ctx(tmp_path, audit, ["allow once"], service)
+    out = {t.name: t for t in gcontacts_mod.build_tools(ctx)}["find_colleague"]("Priya")
+    assert "AMBIGUOUS" in out
+    assert "Do NOT choose one yourself" in out
+    assert "priya.rao@digitalpaani.com" in out and "priya.nair@digitalpaani.com" in out
+
+
+def test_single_match_has_no_disambiguation_noise(tmp_path, audit):
+    service = MagicMock()
+    service.people().searchDirectoryPeople.return_value.execute.return_value = {
+        "people": [{"names": [{"displayName": "Mohit Joshi"}],
+                    "emailAddresses": [{"value": "mohit.joshi@digitalpaani.com"}]}]
+    }
+    ctx = make_ctx(tmp_path, audit, ["allow once"], service)
+    out = {t.name: t for t in gcontacts_mod.build_tools(ctx)}["find_colleague"]("Mohit")
+    assert "AMBIGUOUS" not in out
+    assert "mohit.joshi@digitalpaani.com" in out

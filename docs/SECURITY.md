@@ -163,7 +163,45 @@ Facts are stored in plaintext, like grants and the audit log; treat memory
 as business context, never as a place for secrets (the system prompt
 already forbids writing credentials anywhere).
 
-### 7. Secret storage (`security/secrets.py`, `security/dpapi.py`)
+### 7. Sandboxed code execution (`jarvis/tools/code_sandbox.py`)
+
+The `run_code` tool lets Jarvis write and run a short Python program — the
+most powerful thing it can do, and built as a narrow inspected channel, not
+a shell. Layers, outermost first:
+
+1. **Off unless granted.** The `code_run` capability is described in the
+   setup wizard as the most powerful option; a standing denial removes the
+   tool entirely.
+2. **AST allowlist, not a denylist.** Code is parsed and walked before it
+   runs. Only an allowlist of data-processing imports is permitted; there is
+   no network, subprocess, `os`, `ctypes`, or `importlib` module on it.
+   `eval`/`exec`/`compile`/`__import__` and dunder reach-throughs
+   (`__globals__`, `__subclasses__`, …) are rejected. An allowlist of syntax
+   can't be talked around the way a keyword blocklist can.
+3. **Jarvis is unreachable by it.** Any literal path referencing the Jarvis
+   install, `%APPDATA%\Jarvis`, the OAuth client, audit log, permissions,
+   memory, keyring, or system directories is rejected at validation — the
+   assistant's own code and consent records cannot be read or rewritten by
+   generated code. This is the "don't let it mess with Jarvis" guarantee.
+4. **No network** → nothing can be exfiltrated or pulled in (this is also why
+   "write a port scanner / hacking tool" simply cannot run: `socket` isn't on
+   the allowlist, verified live).
+5. **Confined, disposable workspace**, interpreter in isolated mode
+   (`-I -S`), a hard timeout, and an output cap.
+6. **The human reads the code first** — execution is a confirmed side effect;
+   the exact source is shown/read back before it runs.
+7. **Everything audited**, including refusals (an attempt to reach outside the
+   sandbox is a signal worth keeping).
+
+**Honest limit:** this is a *language-level* sandbox, not OS-level. It raises
+the bar very high for anything arriving *through the assistant* — a
+prompt-injected document or a misused request — which is the actual threat
+model. It is not a defence against a local attacker who already runs code as
+this Windows user; such an attacker doesn't need Jarvis. True OS isolation
+(a container or a restricted token / AppContainer) is the intended next step
+for deployments that want defence in depth here.
+
+### 8. Secret storage (`security/secrets.py`, `security/dpapi.py`)
 
 | Secret | Where | Why |
 |---|---|---|

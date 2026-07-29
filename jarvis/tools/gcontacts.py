@@ -47,16 +47,28 @@ def build_tools(ctx: ToolContext) -> list:
                 sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
             ).execute()
             people = resp.get("people", [])
-            ctx.audit.record("tool_call", tool="find_colleague", detail=name)
+            ctx.audit.record("tool_call", tool="find_colleague",
+                             detail=f"{name} -> {len(people)} match(es)")
             if not people:
                 return f"No one matching '{name}' found in the company directory." + _ADMIN_HINT
             lines = []
-            for p in people[:5]:
+            for p in people[:10]:
                 display = (p.get("names") or [{}])[0].get("displayName", name)
                 emails = ", ".join(e.get("value", "") for e in p.get("emailAddresses", []))
                 phones = ", ".join(ph.get("value", "") for ph in p.get("phoneNumbers", []))
                 lines.append(f"- {display}: {emails}" + (f", phone: {phones}" if phones else ""))
-            return as_document(f"directory:{name}", "\n".join(lines))
+            body = "\n".join(lines)
+            if len(people) > 1:
+                # Never let the model quietly pick one — "Priya" matching two
+                # people must become a question, not a coin flip that emails
+                # the wrong colleague.
+                body = (
+                    f"AMBIGUOUS: {len(people)} people match '{name}'. Do NOT choose "
+                    "one yourself. Ask the user which person they mean (read out "
+                    "the names, and their team or email if that helps tell them "
+                    "apart), then use the address they pick.\n\n" + body
+                )
+            return as_document(f"directory:{name}", body)
         except Exception as e:
             ctx.audit.record("tool_call", tool="find_colleague", detail=name, ok=False)
             return f"Directory lookup failed: {e}"

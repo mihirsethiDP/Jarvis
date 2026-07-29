@@ -126,6 +126,7 @@ _TOOL_CAPABILITIES = {
     "delete_calendar_event": "calendar_write",
     "find_colleague": "directory_read",
     "ask_claude": "ask_claude",
+    "run_code": "code_run",
     "remember": "memory_write",
     # forget_fact is deliberately absent: revocation must survive a standing
     # denial of memory_write, so it is never filtered out of the toolset.
@@ -134,8 +135,8 @@ _TOOL_CAPABILITIES = {
 
 def build_all_tools(ctx: ToolContext) -> list:
     """Assemble the tool list for the agent, honoring standing denials."""
-    from . import (ai_bridge, claude_bridge, gcalendar, gchat, gcontacts,
-                   gdrive, gmail, internal, local_files, memory_tools)
+    from . import (ai_bridge, claude_bridge, code_sandbox, gcalendar, gchat,
+                   gcontacts, gdrive, gmail, internal, local_files, memory_tools)
 
     tools: list = []
     tools += local_files.build_tools(ctx)
@@ -145,6 +146,7 @@ def build_all_tools(ctx: ToolContext) -> list:
     tools += gcalendar.build_tools(ctx)
     tools += gcontacts.build_tools(ctx)
     tools += claude_bridge.build_tools(ctx)
+    tools += code_sandbox.build_tools(ctx)
     if ctx.memory is not None:
         tools += memory_tools.build_tools(ctx)
     tools = [
