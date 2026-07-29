@@ -65,3 +65,52 @@ def test_send_message_only_sends_plain_text_body(tmp_path, audit):
     service.spaces().messages().create.assert_called_with(
         parent="spaces/A", body={"text": "hi team"}
     )
+
+
+def test_sender_ids_resolve_to_names_and_cache(tmp_path, audit):
+    # Chat gives no displayName under user auth; ids must be resolved or the
+    # transcript reads "unknown" for every speaker.
+    chat_svc = MagicMock()
+    chat_svc.spaces().messages().list.return_value.execute.return_value = {
+        "messages": [
+            {"createTime": "t1", "sender": {"name": "users/111", "type": "HUMAN"}, "text": "one"},
+            {"createTime": "t2", "sender": {"name": "users/111", "type": "HUMAN"}, "text": "two"},
+        ]
+    }
+    people_svc = MagicMock()
+    people_svc.people().get.return_value.execute.return_value = {
+        "names": [{"displayName": "Priya Rao"}]
+    }
+    ctx = make_ctx(tmp_path, audit, ["allow once"], chat_svc)
+    ctx.google_service = lambda api, v: people_svc if api == "people" else chat_svc
+
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["read_chat_messages"]("spaces/A")
+    assert "Priya Rao" in out and "unknown" not in out
+    assert people_svc.people().get.call_count == 1  # second message used the cache
+
+
+def test_sender_resolution_falls_back_to_id_on_failure(tmp_path, audit):
+    chat_svc = MagicMock()
+    chat_svc.spaces().messages().list.return_value.execute.return_value = {
+        "messages": [{"createTime": "t", "sender": {"name": "users/999"}, "text": "hi"}]
+    }
+    people_svc = MagicMock()
+    people_svc.people().get.return_value.execute.side_effect = RuntimeError("no directory")
+    ctx = make_ctx(tmp_path, audit, ["allow once"], chat_svc)
+    ctx.google_service = lambda api, v: people_svc if api == "people" else chat_svc
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["read_chat_messages"]("spaces/A")
+    assert "users/999" in out   # degraded but still attributable
+
+
+def test_directory_denial_skips_name_lookup(tmp_path, audit):
+    chat_svc = MagicMock()
+    chat_svc.spaces().messages().list.return_value.execute.return_value = {
+        "messages": [{"createTime": "t", "sender": {"name": "users/111"}, "text": "hi"}]
+    }
+    people_svc = MagicMock()
+    ctx = make_ctx(tmp_path, audit, ["allow once"], chat_svc)
+    ctx.google_service = lambda api, v: people_svc if api == "people" else chat_svc
+    ctx.permissions.set_grant("directory_read", "denied")
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["read_chat_messages"]("spaces/A")
+    people_svc.people().get.assert_not_called()
+    assert "users/111" in out

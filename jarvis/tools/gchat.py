@@ -21,8 +21,37 @@ _MAX_MESSAGES = 25
 
 
 def build_tools(ctx: ToolContext) -> list:
+    sender_names: dict[str, str] = {}  # "users/123" -> "Priya Rao", cached
+
     def _chat():
         return ctx.google_service("chat", "v1")
+
+    def _sender_label(sender: dict) -> str:
+        """Chat returns sender ids with no displayName under user auth, so a
+        transcript would read "unknown: ..." for everyone. Resolve ids to
+        names via the directory (same numeric id works as a People resource),
+        cached, and fall back to the raw id if that isn't available."""
+        given = sender.get("displayName")
+        if given:
+            return given
+        resource = sender.get("name") or ""
+        if not resource:
+            return "unknown"
+        if resource in sender_names:
+            return sender_names[resource]
+        label = resource
+        # Skip lookups the employee declined; the ids still render.
+        if not ctx.permissions.denied("directory_read"):
+            try:
+                person = ctx.google_service("people", "v1").people().get(
+                    resourceName=f"people/{resource.split('/')[-1]}",
+                    personFields="names",
+                ).execute()
+                label = (person.get("names") or [{}])[0].get("displayName") or resource
+            except Exception:
+                pass  # directory unavailable — the id is still informative
+        sender_names[resource] = label
+        return label
 
     @beta_tool
     def list_chat_spaces(name_filter: str = "") -> str:
@@ -78,7 +107,7 @@ def build_tools(ctx: ToolContext) -> list:
                 return f"No messages found in {space_id}."
             lines = [
                 f"[{m.get('createTime', '?')}] "
-                f"{m.get('sender', {}).get('displayName', 'unknown')}: {m.get('text', '')}"
+                f"{_sender_label(m.get('sender', {}))}: {m.get('text', '')}"
                 for m in messages
             ]
             return as_document(f"chat:{space_id}", "\n".join(lines))
@@ -115,6 +144,17 @@ def build_tools(ctx: ToolContext) -> list:
             return f"Message sent to {space_id}: {sent.get('name', '')}"
         except Exception as e:
             ctx.audit.record("tool_call", tool="send_chat_message", detail=space_id, ok=False)
-            return f"Sending the Chat message failed: {e}"
+            hint = ""
+            if "403" in str(e) or "PERMISSION_DENIED" in str(e).upper():
+                # Reading Chat works with just the API enabled, but *sending*
+                # additionally needs the one-time "Configure the Google Chat
+                # API" step (app name/avatar) in Cloud Console.
+                hint = (
+                    " If this is the first time sending, the Google Chat API may "
+                    "still need its one-time app configuration in the Cloud "
+                    "Console (APIs & Services, Google Chat API, Configure). "
+                    "Reading Chat works without it; sending doesn't."
+                )
+            return f"Sending the Chat message failed: {e}.{hint}"
 
     return [list_chat_spaces, read_chat_messages, send_chat_message]
