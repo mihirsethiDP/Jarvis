@@ -144,16 +144,20 @@ def build_tools(ctx: ToolContext) -> list:
             return f"Message sent to {space_id}: {sent.get('name', '')}"
         except Exception as e:
             ctx.audit.record("tool_call", tool="send_chat_message", detail=space_id, ok=False)
+            # Observed verbatim from Google on a real unconfigured project:
+            # 404 "Google Chat app not found. To create a Chat app, you must
+            # turn on the Chat API and configure the app in the Google Cloud
+            # console." Reading Chat works without that step; sending doesn't,
+            # and the raw error doesn't make the read/write split obvious.
+            text = str(e)
             hint = ""
-            if "403" in str(e) or "PERMISSION_DENIED" in str(e).upper():
-                # Reading Chat works with just the API enabled, but *sending*
-                # additionally needs the one-time "Configure the Google Chat
-                # API" step (app name/avatar) in Cloud Console.
+            if ("Chat app not found" in text or "configure the app" in text
+                    or "403" in text or "PERMISSION_DENIED" in text.upper()):
                 hint = (
-                    " If this is the first time sending, the Google Chat API may "
-                    "still need its one-time app configuration in the Cloud "
-                    "Console (APIs & Services, Google Chat API, Configure). "
-                    "Reading Chat works without it; sending doesn't."
+                    " This usually means the Google Chat API still needs its "
+                    "one-time app configuration: Cloud Console, APIs & Services, "
+                    "Google Chat API, Configuration tab. Reading Chat works "
+                    "without it; sending does not."
                 )
             return f"Sending the Chat message failed: {e}.{hint}"
 

@@ -114,3 +114,18 @@ def test_directory_denial_skips_name_lookup(tmp_path, audit):
     out = {t.name: t for t in gchat_mod.build_tools(ctx)}["read_chat_messages"]("spaces/A")
     people_svc.people().get.assert_not_called()
     assert "users/111" in out
+
+
+def test_unconfigured_chat_app_error_gets_actionable_hint(tmp_path, audit):
+    # Verbatim shape of the real 404 Google returns when the Chat API app
+    # configuration step hasn't been done.
+    service = MagicMock()
+    service.spaces().messages().create.return_value.execute.side_effect = RuntimeError(
+        '<HttpError 404 ... returned "Google Chat app not found. To create a Chat '
+        'app, you must turn on the Chat API and configure the app in the Google '
+        'Cloud console.">'
+    )
+    ctx = make_ctx(tmp_path, audit, ["allow once", "yes"], service)
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["send_chat_message"]("spaces/A", "hi")
+    assert "Configuration tab" in out
+    assert "Reading Chat works without it" in out
