@@ -25,7 +25,7 @@ from urllib.parse import quote
 import httpx
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 from ..config import InternalActionConfig, InternalToolConfig
 from ..paths import cli_hint
 from ..security import secrets as secret_store
@@ -198,11 +198,12 @@ def make_caller(ctx: ToolContext, tool: InternalToolConfig, public_name: str | N
             shown = shown if len(shown) <= 200 else shown[:200] + "…"
             summary = (f"I will run the write action {spec.name} on {tool.name} "
                        f"with parameters {shown}.")
-            if not ctx.confirmer.confirm(
+            result = ctx.confirmer.confirm(
                 f"{tool.name}:{spec.name}", summary,
                 audit_detail=f"{spec.name} params_keys={sorted(params)}",
-            ):
-                return f"Cancelled — the user did not confirm {spec.name} on {tool.name}."
+            )
+            if not result:
+                return cancelled_by_user(result, f"{spec.name} on {tool.name}")
 
         return _execute(ctx, tool, spec, params)
 

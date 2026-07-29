@@ -21,7 +21,7 @@ import hashlib
 
 from anthropic import beta_tool
 
-from . import ToolContext
+from . import ToolContext, cancelled_by_user
 from ..memory import CATEGORIES, MAX_FACT_CHARS, normalize_fact
 
 
@@ -63,11 +63,12 @@ def build_tools(ctx: ToolContext) -> list:
 
         # A memory persists and shapes every later turn, so the user hears it
         # verbatim first — same bar as any other lasting side effect.
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "remember", f'I will remember this from now on: "{text}".',
             audit_detail=f"category={category} sha256={_digest(text)}",
-        ):
-            return "Cancelled — the user did not confirm remembering that."
+        )
+        if not result:
+            return cancelled_by_user(result, "remembering that")
 
         try:
             stored = ctx.memory.add(text, category)
@@ -93,11 +94,12 @@ def build_tools(ctx: ToolContext) -> list:
         existing = ctx.memory.find(fact_id)
         if existing is None:
             return f"There's no remembered fact with the id '{fact_id}'."
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "forget_fact", f'I will forget: "{existing.text}".',
             audit_detail=existing.id,
-        ):
-            return "Cancelled — the user did not confirm forgetting that."
+        )
+        if not result:
+            return cancelled_by_user(result, "forgetting that")
 
         ctx.memory.forget(existing.id)
         ctx.audit.record("tool_call", tool="forget_fact",

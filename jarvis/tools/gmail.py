@@ -13,7 +13,7 @@ from email.message import EmailMessage
 
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 
 _MAX_RESULTS = 20
 _MAX_BODY_CHARS = 20_000
@@ -178,11 +178,12 @@ def build_tools(ctx: ToolContext) -> list:
             + (f" (cc {cc})" if cc else "")
             + f' with the subject "{subject}". It begins: "{preview}".'
         )
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "send_email", summary,
             audit_detail=f'to={to} cc={cc} subject="{subject}"',  # no body in the log
-        ):
-            return "Cancelled — the user did not confirm sending the email."
+        )
+        if not result:
+            return cancelled_by_user(result, "sending the email")
 
         try:
             msg = EmailMessage()
@@ -248,11 +249,12 @@ def build_tools(ctx: ToolContext) -> list:
                 "mark_read, mark_unread, add_label, remove_label."
             )
 
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "organize_email", f"I will {summary} (id {message_id}).",
             audit_detail=f"{action} label={label} id={message_id}",
-        ):
-            return "Cancelled — the user did not confirm that mailbox change."
+        )
+        if not result:
+            return cancelled_by_user(result, "that mailbox change")
 
         try:
             gmail = _gmail().users().messages()

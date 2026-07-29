@@ -202,3 +202,14 @@ def test_label_lookup_failure_is_caught_and_audited(tmp_path, audit):
     out = tools["organize_email"]("m1", "add_label", label="Vendors")
     assert "failed" in out.lower()
     assert any(e["tool"] == "organize_email" and not e["ok"] for e in audit.tail(5))
+
+
+def test_declined_send_relays_the_correction_to_the_model(tmp_path, audit):
+    service = MagicMock()
+    ctx = make_ctx(tmp_path, audit, ["allow once", "no, send it to priya instead"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["send_email"]("mohit@x.com", "Subj", "body")
+    assert "Cancelled" in out
+    assert "priya instead" in out          # the correction rides back
+    assert "adjust the action" in out      # with instructions to retry
+    service.users().messages().send.assert_not_called()

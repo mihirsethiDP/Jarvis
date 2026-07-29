@@ -129,3 +129,19 @@ def test_new_facts_take_effect_without_restart(tmp_path, agent):
 def test_agent_without_memory_still_builds_a_prompt(agent):
     agent.memory = None
     assert "Jarvis" in agent._system_prompt()
+
+
+def test_budget_exhausted_blocks_before_any_api_call(tmp_path, agent, monkeypatch):
+    from jarvis.usage import TurnBudget
+
+    budget = TurnBudget(1, path=tmp_path / "u.json", today=lambda: "2026-07-29")
+    budget.record()  # limit already used up
+    agent.turn_budget = budget
+
+    def boom():
+        raise AssertionError("API must not be called past the budget")
+
+    monkeypatch.setattr(agent, "_run_tool_loop", boom)
+    reply = agent.run_turn("hello")
+    assert "limit" in reply.lower()
+    assert agent.messages == []  # nothing appended, nothing sent

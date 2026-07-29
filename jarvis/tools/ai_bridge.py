@@ -13,7 +13,7 @@ import os
 import httpx
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 from ..config import AIToolConfig
 
 _TIMEOUT = 60.0
@@ -84,11 +84,12 @@ def build_tools(ctx: ToolContext) -> list:
             f"I will send a prompt of {len(prompt)} characters to the external AI "
             f'tool {tool.name}. It begins: "{preview}".'
         )
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "ask_ai_tool", summary,
             audit_detail=f"{tool.name}: {len(prompt)} chars",
-        ):
-            return f"Cancelled — the user did not confirm sending the prompt to '{tool.name}'."
+        )
+        if not result:
+            return cancelled_by_user(result, f"sending the prompt to '{tool.name}'")
         try:
             if tool.kind == "anthropic":
                 answer = _call_anthropic(tool, prompt)

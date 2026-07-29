@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 
 _MAX_SPACES = 25
 _MAX_MESSAGES = 25
@@ -128,12 +128,13 @@ def build_tools(ctx: ToolContext) -> list:
             return "The user declined Google Chat send access."
 
         preview = text if len(text) <= 200 else text[:200] + "…"
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "send_chat_message",
             f'I will send this to {space_id}: "{preview}".',
             audit_detail=f"space={space_id} chars={len(text)}",
-        ):
-            return "Cancelled — the user did not confirm sending that Chat message."
+        )
+        if not result:
+            return cancelled_by_user(result, "sending that Chat message")
 
         try:
             sent = _chat().spaces().messages().create(
@@ -149,10 +150,10 @@ def build_tools(ctx: ToolContext) -> list:
             # turn on the Chat API and configure the app in the Google Cloud
             # console." Reading Chat works without that step; sending doesn't,
             # and the raw error doesn't make the read/write split obvious.
-            text = str(e)
+            err_text = str(e)
             hint = ""
-            if ("Chat app not found" in text or "configure the app" in text
-                    or "403" in text or "PERMISSION_DENIED" in text.upper()):
+            if ("Chat app not found" in err_text or "configure the app" in err_text
+                    or "403" in err_text or "PERMISSION_DENIED" in err_text.upper()):
                 hint = (
                     " This usually means the Google Chat API still needs its "
                     "one-time app configuration: Cloud Console, APIs & Services, "

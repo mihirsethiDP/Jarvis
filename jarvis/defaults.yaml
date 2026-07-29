@@ -19,6 +19,11 @@ brain:
   max_tokens: 8192
   # How many previous exchanges to keep in the conversation window.
   max_history_turns: 20
+  # Hard daily brake on API spend, enforced in code before any Claude call:
+  # after this many brain turns in one day, Jarvis pauses until tomorrow.
+  # 0 disables the limit. Pair with a spend cap on the key's workspace in
+  # the Anthropic Console for defense in depth.
+  daily_turn_limit: 200
 
 audio:
   input_device: null        # null = system default microphone
@@ -36,6 +41,9 @@ audio:
     language: en
     max_seconds: 20         # hard cap on a single utterance
     silence_seconds: 1.2    # end of speech after this much silence
+  # After Jarvis replies, keep listening this many seconds for a follow-up
+  # ("no wait, I misspoke") with no wake word needed. 0 disables.
+  follow_up_seconds: 8
   tts:
     # pyttsx3: offline Windows SAPI voices (private, robotic).
     # edge: Microsoft neural voices incl. Hindi/Hinglish — natural, but CLOUD:

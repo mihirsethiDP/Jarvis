@@ -29,14 +29,20 @@ class UtteranceRecorder:
         self.silence_seconds = silence_seconds
         self.start_window_seconds = start_window_seconds
 
-    def record(self) -> np.ndarray:
+    def record(self, start_window: float | None = None) -> np.ndarray:
         """Record one utterance; returns float32 mono 16 kHz audio (may be empty).
 
         The noise floor adapts only on *non-speech* blocks, and speech is
         checked from the very first block — so a user who starts talking
         immediately (one-breath "Hey Jarvis, what's…") is captured instead of
         being averaged into the noise floor.
+
+        Args:
+            start_window: How long to wait for speech to begin before giving
+                up (defaults to the configured start window). The follow-up
+                listener passes its own, shorter window here.
         """
+        window = self.start_window_seconds if start_window is None else start_window
         blocks: list[np.ndarray] = []
         noise_rms = 150.0  # prior on int16 scale; adapts to the room below
         speech_started = False
@@ -65,7 +71,7 @@ class UtteranceRecorder:
                     silence_run += _BLOCK_SECONDS
                     if silence_run >= self.silence_seconds:
                         break
-                elif elapsed >= self.start_window_seconds:
+                elif elapsed >= window:
                     return np.empty(0, dtype=np.float32)  # user never spoke
 
         if not speech_started or not blocks:

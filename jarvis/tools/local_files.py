@@ -6,7 +6,7 @@ from pathlib import Path
 
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 
 _MAX_READ_BYTES = 200_000
 _MAX_RESULTS = 25
@@ -182,8 +182,9 @@ def build_tools(ctx: ToolContext) -> list:
         exists = target.exists()
         action = "overwrite the existing file" if exists else "create a new file"
         summary = f"I will {action} at {target} ({len(content)} characters)."
-        if not ctx.confirmer.confirm("write_file", summary):
-            return "Cancelled — the user did not confirm the file write."
+        result = ctx.confirmer.confirm("write_file", summary)
+        if not result:
+            return cancelled_by_user(result, "the file write")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")

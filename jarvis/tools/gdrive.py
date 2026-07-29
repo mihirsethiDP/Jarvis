@@ -7,7 +7,7 @@ from pathlib import Path
 
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 from .local_files import PathNotAllowed, resolve_safe
 
 _MAX_EXPORT_BYTES = 200_000
@@ -114,8 +114,9 @@ def build_tools(ctx: ToolContext) -> list:
         if not ctx.permissions.require("drive_write", "create files in your Google Drive"):
             return "The user declined Google Drive write access."
         summary = f"I will create '{name}' in your Google Drive ({len(content)} characters)."
-        if not ctx.confirmer.confirm("drive_save_text", summary):
-            return "Cancelled — the user did not confirm the Drive upload."
+        result = ctx.confirmer.confirm("drive_save_text", summary)
+        if not result:
+            return cancelled_by_user(result, "the Drive upload")
         try:
             from googleapiclient.http import MediaIoBaseUpload
 
@@ -157,8 +158,9 @@ def build_tools(ctx: ToolContext) -> list:
 
         size_kb = source.stat().st_size // 1024
         summary = f"I will upload {source.name} ({size_kb} KB) from {source.parent} to your Google Drive."
-        if not ctx.confirmer.confirm("drive_upload", summary):
-            return "Cancelled — the user did not confirm the upload."
+        result = ctx.confirmer.confirm("drive_upload", summary)
+        if not result:
+            return cancelled_by_user(result, "the upload")
         try:
             from googleapiclient.http import MediaFileUpload
 

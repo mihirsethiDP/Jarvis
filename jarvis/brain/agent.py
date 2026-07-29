@@ -28,6 +28,7 @@ class JarvisAgent:
         on_status: Callable[[str], None] | None = None,
         memory: MemoryStore | None = None,
         recall_check: Callable[[], bool] | None = None,
+        turn_budget=None,
     ):
         self.config = config
         self.tools = tools
@@ -38,6 +39,7 @@ class JarvisAgent:
         self.memory = memory
         self._recall_check = recall_check or (lambda: True)
         self._recall_decision: bool | None = None
+        self.turn_budget = turn_budget
         self.messages: list[dict] = []
 
     def _may_recall(self) -> bool:
@@ -58,6 +60,18 @@ class JarvisAgent:
     # ------------------------------------------------------------------
     def run_turn(self, user_text: str) -> str:
         """Run one conversational turn and return the text to speak."""
+        # Hard spend brake — checked in code before any API call is made.
+        if self.turn_budget is not None and not self.turn_budget.allow():
+            self.audit.record("turn", tool="brain", detail="daily limit reached",
+                              decision="budget_blocked", ok=False)
+            return (
+                f"I've reached today's safety limit of "
+                f"{self.turn_budget.daily_limit} interactions, so I'm pausing "
+                "until tomorrow. Raise brain.daily_turn_limit in my config if "
+                "you need more."
+            )
+        if self.turn_budget is not None:
+            self.turn_budget.record()  # count the attempt, not the success
         self._trim_history()
         # A failure can strike mid-tool-loop, after assistant/tool_result pairs
         # were already mirrored; rolling back to the checkpoint (not popping

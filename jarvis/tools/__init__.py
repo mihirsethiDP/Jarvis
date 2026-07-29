@@ -67,6 +67,24 @@ DATA_BOUNDARY_NOTE = (
 _CLOSING_TAG = re.compile(r"</\s*document\s*>", re.IGNORECASE)
 
 
+def cancelled_by_user(result, action_phrase: str) -> str:
+    """Standard tool result for a declined confirmation.
+
+    If the user declined with words beyond a plain no ("no, send it to Priya
+    instead", "nahi, 4 baje karo"), those words ride back to the model as a
+    correction to act on — a mistake mid-flow should change the plan, not
+    end the conversation.
+    """
+    base = f"Cancelled — the user did not confirm {action_phrase}."
+    correction = getattr(result, "correction", "")
+    if correction:
+        base += (
+            f' They said: "{correction}". Treat that as a correction: adjust '
+            "the action accordingly and ask again."
+        )
+    return base
+
+
 def as_document(source: str, content: str) -> str:
     """Wrap fetched content so the model treats it as data, not instructions.
 

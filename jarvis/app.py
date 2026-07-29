@@ -13,6 +13,7 @@ from .paths import cli_hint
 from .security import AuditLog, Confirmer, PermissionManager
 from .security import secrets as secret_store
 from .tools import ToolContext, build_all_tools
+from .usage import TurnBudget
 
 
 def _headless_error(message: str) -> None:
@@ -83,6 +84,7 @@ class JarvisApp:
             print("Note: you denied memory recall but allowed remembering — Jarvis "
                   "will store facts it never uses. Consider denying both, or "
                   f"allowing recall: {cli_hint('setup')}")
+        limit = int(config.get("brain.daily_turn_limit", 200))
         self.agent = JarvisAgent(
             config, build_all_tools(ctx), self.audit, on_status=self._publish,
             memory=self.memory,
@@ -91,6 +93,7 @@ class JarvisApp:
             recall_check=lambda: self.permissions.require(
                 "memory_recall", "use what it remembered about you earlier"
             ),
+            turn_budget=TurnBudget(limit) if limit > 0 else None,
         )
         self.io: IOChannel = io
 
@@ -230,9 +233,26 @@ class JarvisApp:
             self._publish("idle")
         print("\nGoodbye.")
 
+    def _speak_turn(self, text: str) -> bool:
+        """Run one brain turn and speak the reply. Returns False on shutdown."""
+        v = self.voice
+        if text.lower().strip(" .!,") in _EXIT_PHRASES:
+            v["speaker"].say("Shutting down. Goodbye.")
+            return False
+        self._publish("thinking", text)
+        reply = self.agent.run_turn(text)
+        self._publish("speaking", reply)
+        print(f"Jarvis: {reply}")
+        v["speaker"].say(reply)
+        v["mic"].drain()
+        return True
+
     def _run_voice(self) -> None:
         v = self.voice
         name = self.config.get("assistant.name", "Jarvis")
+        # After a reply, keep listening briefly: people correct themselves
+        # ("no wait, I misspoke") and shouldn't need the wake word mid-flow.
+        follow_secs = float(self.config.get("audio.follow_up_seconds", 8))
         print(f'\n{name} is listening — say "Hey Jarvis". Ctrl+C to quit.')
         try:
             while True:
@@ -251,15 +271,18 @@ class JarvisApp:
                         v["mic"].drain()
                         continue
                     print(f"You: {text}")
-                    if text.lower().strip(" .!,") in _EXIT_PHRASES:
-                        v["speaker"].say("Shutting down. Goodbye.")
-                        break
-                    self._publish("thinking", text)
-                    reply = self.agent.run_turn(text)
-                    self._publish("speaking", reply)
-                    print(f"Jarvis: {reply}")
-                    v["speaker"].say(reply)
-                    v["mic"].drain()
+                    if not self._speak_turn(text):
+                        return
+                    # Follow-up window: no wake word needed to continue.
+                    while follow_secs > 0:
+                        self._publish("listening", "follow-up — just speak")
+                        audio = v["recorder"].record(start_window=follow_secs)
+                        followup = v["stt"].transcribe(audio)
+                        if not followup:
+                            break  # silence — back to waiting for the wake word
+                        print(f"You: {followup}")
+                        if not self._speak_turn(followup):
+                            return
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:

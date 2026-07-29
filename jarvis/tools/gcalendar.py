@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from anthropic import beta_tool
 
-from . import ToolContext, as_document
+from . import ToolContext, as_document, cancelled_by_user
 
 _MAX_EVENTS = 25
 
@@ -123,11 +123,12 @@ def build_tools(ctx: ToolContext) -> list:
             # outgoing content (matches send_email/send_chat_message previews).
             preview = description if len(description) <= 200 else description[:200] + "…"
             summary_text += f' Description: "{preview}".'
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "create_calendar_event", summary_text,
             audit_detail=f"{summary} {start}..{end} attendees={len(attendee_list)}",
-        ):
-            return "Cancelled — the user did not confirm creating that event."
+        )
+        if not result:
+            return cancelled_by_user(result, "creating that event")
         try:
             body = {
                 "summary": summary, "start": {"dateTime": start}, "end": {"dateTime": end},
@@ -159,11 +160,12 @@ def build_tools(ctx: ToolContext) -> list:
         """
         if not ctx.permissions.require("calendar_write", "create or change your Calendar events"):
             return "The user declined Calendar write access."
-        if not ctx.confirmer.confirm(
+        result = ctx.confirmer.confirm(
             "delete_calendar_event", f"I will delete calendar event {event_id} and notify attendees.",
             audit_detail=event_id,
-        ):
-            return "Cancelled — the user did not confirm deleting that event."
+        )
+        if not result:
+            return cancelled_by_user(result, "deleting that event")
         try:
             _calendar().events().delete(
                 calendarId=calendar_id, eventId=event_id, sendUpdates="all"
