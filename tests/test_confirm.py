@@ -76,3 +76,26 @@ def test_hinglish_correction_is_preserved(audit):
     result = c.confirm("create_calendar_event", "create at 3pm")
     assert not result
     assert "4 baje" in result.correction
+
+
+def test_rate_limited_action_is_refused_without_asking(audit, tmp_path):
+    from jarvis.security.limits import ActionLimiter
+
+    lim = ActionLimiter(caps={"send_email": (1, 5)}, path=tmp_path / "l.json")
+    io = FakeIO(["yes", "yes"])
+    c = Confirmer(io, audit, limiter=lim)
+
+    assert bool(c.confirm("send_email", "first one")) is True
+    result = c.confirm("send_email", "second one")
+    assert not result                       # refused outright
+    assert len(io.asked) == 1               # the user was never even asked again
+    assert any(e["decision"] == "rate_limited" for e in audit.tail(5))
+
+
+def test_only_confirmed_actions_count_toward_the_limit(audit, tmp_path):
+    from jarvis.security.limits import ActionLimiter
+
+    lim = ActionLimiter(caps={"send_email": (1, 5)}, path=tmp_path / "l.json")
+    c = Confirmer(FakeIO(["no", "yes"]), audit, limiter=lim)
+    c.confirm("send_email", "declined")     # cancelled — shouldn't consume quota
+    assert bool(c.confirm("send_email", "allowed")) is True

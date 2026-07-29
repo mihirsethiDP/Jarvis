@@ -66,10 +66,14 @@ class ConfirmResult:
 
 
 class Confirmer:
-    def __init__(self, io: IOChannel, audit: AuditLog, *, enabled: bool = True):
+    def __init__(self, io: IOChannel, audit: AuditLog, *, enabled: bool = True,
+                 limiter=None):
         self.io = io
         self.audit = audit
         self.enabled = enabled
+        # Every side effect funnels through confirm(), so the blast-radius
+        # cap lives here and covers all of them at once.
+        self.limiter = limiter
 
     def confirm(self, action: str, summary: str, *, audit_detail: str | None = None) -> ConfirmResult:
         """Read the action back to the user; only an explicit yes proceeds.
@@ -79,6 +83,21 @@ class Confirmer:
         content-free variant when the summary contains message bodies.
         """
         detail = audit_detail if audit_detail is not None else summary
+
+        # Refuse before asking: if this action is over its safety ceiling,
+        # a "yes" shouldn't be able to authorise it either.
+        if self.limiter is not None:
+            reason = self.limiter.check(action)
+            if reason is not None:
+                self.audit.record("confirmation", tool=action, detail=detail,
+                                  decision="rate_limited", ok=False)
+                self.io.say(
+                    f"I've stopped short of that — {reason}. If this is "
+                    "genuinely needed, it has to be done manually or the limit "
+                    "raised deliberately."
+                )
+                return ConfirmResult(False)
+
         if not self.enabled:
             self.audit.record("confirmation", tool=action, detail=detail,
                               decision="skipped_disabled", ok=True)
@@ -98,4 +117,6 @@ class Confirmer:
             decision="confirmed" if confirmed else "cancelled",
             ok=confirmed,
         )
+        if confirmed and self.limiter is not None:
+            self.limiter.record(action)
         return ConfirmResult(confirmed, raw)

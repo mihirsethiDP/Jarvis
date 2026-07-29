@@ -69,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     perm.add_argument("action", choices=["list", "revoke"])
     perm.add_argument("capability", nargs="?", default="")
 
+    sub.add_parser("security-check", help="Audit this machine's Jarvis security posture")
+
     mem = sub.add_parser("memory", help="Review or delete what Jarvis remembers")
     mem.add_argument("action", choices=["list", "forget", "clear"])
     mem.add_argument("fact_id", nargs="?", default="")
@@ -138,6 +140,27 @@ def main(argv: list[str] | None = None) -> int:
         removed = pm.revoke(args.capability)
         print("Revoked." if removed else "No such persistent grant.")
         return 0
+
+    if args.cmd == "security-check":
+        from .security.checkup import run_checks
+
+        findings = run_checks(config)
+        marks = {"ok": "  OK  ", "warn": " WARN ", "risk": " RISK "}
+        risks = sum(1 for f in findings if f.level == "risk")
+        warns = sum(1 for f in findings if f.level == "warn")
+
+        print("\n=== Jarvis security check ===\n")
+        for f in findings:
+            print(f"[{marks[f.level]}] {f.title}")
+            if f.detail:
+                print(f"           {f.detail}")
+            if f.fix and f.level != "ok":
+                print(f"           -> {f.fix}")
+            print()
+        print(f"{risks} risk(s), {warns} warning(s), "
+              f"{len(findings) - risks - warns} passing.")
+        # Non-zero exit so this can gate a rollout or run from a scheduled task.
+        return 1 if risks else 0
 
     if args.cmd == "memory":
         from .memory import MemoryStore

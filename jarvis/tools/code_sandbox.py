@@ -35,6 +35,7 @@ token; that is a deliberate future step, noted in docs/SECURITY.md.
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -79,6 +80,21 @@ def workspace_dir() -> Path:
     path = app_data_dir() / "workspace"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _minimal_env() -> dict[str, str]:
+    """The smallest environment Python still starts in on Windows.
+
+    Deliberately excludes ANTHROPIC_API_KEY and everything else the parent
+    holds — a sandboxed program should not inherit the assistant's secrets
+    even though it cannot import `os` to read them.
+    """
+    keep = ("SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP",
+            "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE")
+    env = {name: os.environ[name] for name in keep if name in os.environ}
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
 
 
 def _protected_fragments() -> list[str]:
@@ -208,6 +224,11 @@ def build_tools(ctx: ToolContext) -> list:
                 timeout=_TIMEOUT_SECONDS,
                 encoding="utf-8",
                 errors="replace",
+                # Scrubbed environment: the parent process holds the Claude
+                # API key (and whatever else the employee has exported), and
+                # a child has no business seeing any of it. Only the few
+                # variables Windows needs to start Python at all are passed.
+                env=_minimal_env(),
             )
         except subprocess.TimeoutExpired:
             ctx.audit.record("tool_call", tool="run_code",

@@ -11,6 +11,7 @@ from .io_channel import IOChannel, TextIO, VoiceIO
 from .memory import MemoryStore
 from .paths import cli_hint
 from .security import AuditLog, Confirmer, PermissionManager
+from .security.limits import ActionLimiter
 from .security import secrets as secret_store
 from .tools import ToolContext, build_all_tools
 from .usage import TurnBudget
@@ -76,7 +77,8 @@ class JarvisApp:
         # Side-effect confirmation is always on — deliberately not configurable,
         # so no config edit (or prompt-injected "helpful suggestion") can
         # disable the human-in-the-loop gate.
-        self.confirmer = Confirmer(io, self.audit)
+        # Blast-radius caps: even a confirmed action can't run away.
+        self.confirmer = Confirmer(io, self.audit, limiter=ActionLimiter())
         self.memory = MemoryStore()
         limit = int(config.get("brain.daily_turn_limit", 200))
         self.turn_budget = TurnBudget(limit) if limit > 0 else None
