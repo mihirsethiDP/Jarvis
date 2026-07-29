@@ -53,10 +53,26 @@ class AuditLog:
             "audit-anchor-" + hashlib.sha256(str(self.path).encode()).hexdigest()[:16]
         )
         self._warned_degraded = False
+        # Live observers (the activity feed). Every action already funnels
+        # through record(), so subscribing here gives complete visibility
+        # without instrumenting each tool separately.
+        self._subscribers: list = []
         try:
             self._user = getpass.getuser()
         except Exception:
             self._user = "unknown"
+
+    def subscribe(self, callback) -> None:
+        """Call *callback(entry_dict)* on every recorded event. Never let a
+        subscriber's failure break auditing or the assistant."""
+        self._subscribers.append(callback)
+
+    def _notify(self, entry: dict) -> None:
+        for callback in list(self._subscribers):
+            try:
+                callback(dict(entry))
+            except Exception:
+                pass
 
     # -- tail / anchor helpers ---------------------------------------------
     def _read_tail_hash(self) -> str:
@@ -159,6 +175,7 @@ class AuditLog:
                 self._warned_degraded = True
                 print(f"Warning: audit log unwritable ({e}) — events are being dropped.",
                       file=sys.stderr)
+        self._notify(entry)
 
     def tail(self, n: int = 20) -> list[dict]:
         """Return the most recent *n* entries (for `jarvis audit`)."""

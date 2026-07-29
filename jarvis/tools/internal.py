@@ -48,7 +48,7 @@ _BUILTIN_TOOL_NAMES = {
     "list_chat_spaces", "read_chat_messages", "send_chat_message",
     "list_calendar_events", "check_availability",
     "create_calendar_event", "delete_calendar_event",
-    "find_colleague", "ask_ai_tool", "remember", "forget_fact",
+    "find_colleague", "ask_ai_tool", "ask_claude", "remember", "forget_fact",
 }
 
 

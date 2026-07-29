@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections import deque
 from pathlib import Path
 
 import uvicorn
@@ -25,6 +26,9 @@ class StateServer:
         self.host = "127.0.0.1"
         self.port = port
         self._state = {"state": "starting", "detail": ""}
+        # Rolling record of what Jarvis actually did, so the employee can
+        # watch each step rather than trusting a summary after the fact.
+        self._activity: deque[dict] = deque(maxlen=200)
         self._clients: list[WebSocket] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app = self._build_app()
@@ -56,7 +60,12 @@ class StateServer:
             await websocket.accept()
             self._clients.append(websocket)
             try:
-                await websocket.send_json(self._state)
+                # Replay history so a page opened mid-task isn't blank.
+                await websocket.send_json({
+                    "type": "snapshot",
+                    "state": self._state,
+                    "activity": list(self._activity),
+                })
                 while True:
                     await websocket.receive_text()  # keepalive; content ignored
             except WebSocketDisconnect:
@@ -67,22 +76,48 @@ class StateServer:
 
         return app
 
-    async def _broadcast(self) -> None:
+    async def _broadcast(self, payload: dict) -> None:
         dead = []
         for client in list(self._clients):
             try:
-                await client.send_json(self._state)
+                await client.send_json(payload)
             except Exception:
                 dead.append(client)
         for client in dead:
             if client in self._clients:
                 self._clients.remove(client)
 
+    def _send(self, payload: dict) -> None:
+        if self._loop is not None and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._broadcast(payload), self._loop)
+
     def publish(self, state: str, detail: str = "") -> None:
         """Thread-safe state update from the assistant."""
         self._state = {"state": state, "detail": detail[:300]}
-        if self._loop is not None and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._broadcast(), self._loop)
+        self._send({"type": "state", **self._state})
+
+    # -- activity feed ----------------------------------------------------
+    _VERB = {
+        "tool_call": "used", "permission": "asked permission for",
+        "confirmation": "asked you to confirm", "turn": "handled",
+        "startup": "started", "error": "hit an error in", "setup": "setup",
+        "memory": "memory",
+    }
+
+    def record_activity(self, entry: dict) -> None:
+        """Render one audit entry into the live feed. Wired to AuditLog, so
+        every gated action shows up here without per-tool instrumentation."""
+        item = {
+            "ts": str(entry.get("ts", ""))[11:19],
+            "event": entry.get("event", ""),
+            "verb": self._VERB.get(entry.get("event", ""), entry.get("event", "")),
+            "tool": entry.get("tool", ""),
+            "detail": str(entry.get("detail", ""))[:180],
+            "decision": entry.get("decision", ""),
+            "ok": bool(entry.get("ok", True)),
+        }
+        self._activity.append(item)
+        self._send({"type": "activity", **item})
 
     def start(self) -> None:
         config = uvicorn.Config(

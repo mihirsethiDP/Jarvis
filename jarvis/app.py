@@ -55,6 +55,9 @@ class JarvisApp:
                 # Loopback only, by design — the page shows live conversation
                 # state and must never be reachable from the LAN.
                 self.state_server = StateServer(port=int(config.get("ui.port", 8763)))
+                # Every gated action already flows through the audit log, so
+                # subscribing here gives the live view complete coverage.
+                self.audit.subscribe(self.state_server.record_activity)
                 self.state_server.start()
             except ImportError:
                 print("UI dependencies missing — run `pip install .[ui]`. Continuing without UI.")
@@ -75,16 +78,18 @@ class JarvisApp:
         # disable the human-in-the-loop gate.
         self.confirmer = Confirmer(io, self.audit)
         self.memory = MemoryStore()
+        limit = int(config.get("brain.daily_turn_limit", 200))
+        self.turn_budget = TurnBudget(limit) if limit > 0 else None
         ctx = ToolContext(
             config=config, permissions=self.permissions,
             confirmer=self.confirmer, audit=self.audit, memory=self.memory,
+            turn_budget=self.turn_budget,
         )
         if (self.permissions.denied("memory_recall")
                 and not self.permissions.denied("memory_write")):
             print("Note: you denied memory recall but allowed remembering — Jarvis "
                   "will store facts it never uses. Consider denying both, or "
                   f"allowing recall: {cli_hint('setup')}")
-        limit = int(config.get("brain.daily_turn_limit", 200))
         self.agent = JarvisAgent(
             config, build_all_tools(ctx), self.audit, on_status=self._publish,
             memory=self.memory,
@@ -93,7 +98,7 @@ class JarvisApp:
             recall_check=lambda: self.permissions.require(
                 "memory_recall", "use what it remembered about you earlier"
             ),
-            turn_budget=TurnBudget(limit) if limit > 0 else None,
+            turn_budget=self.turn_budget,
         )
         self.io: IOChannel = io
 
