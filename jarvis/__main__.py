@@ -61,6 +61,15 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup", help="First-run consent wizard: choose what Jarvis may access")
     sub.add_parser("setup-google", help="Authorize Google Drive/Gmail access now")
 
+    voi = sub.add_parser("voices", help="Hear the Indian voices and pick one")
+    voi.add_argument("--only", default=None, help="Audition a single voice by name")
+
+    wk = sub.add_parser("wake-test",
+                        help="Measure what your voice scores against the wake word")
+    wk.add_argument("--threshold", type=float, default=None,
+                    help="Override the configured detection threshold")
+    wk.add_argument("--seconds", type=int, default=60, help="How long to listen")
+
     sec = sub.add_parser("secrets", help="Manage secrets in the Windows keyring")
     sec.add_argument("action", choices=["set", "delete"])
     sec.add_argument("name", help="Secret name, e.g. 'anthropic'")
@@ -106,6 +115,21 @@ def main(argv: list[str] | None = None) -> int:
         print("Google authorization complete." if creds and creds.valid
               else "Authorization did not complete.")
         return 0
+
+    if args.cmd == "voices":
+        from .audio.voices import audition
+
+        return audition(args.only)
+
+    if args.cmd == "wake-test":
+        from .audio.waketest import run
+
+        return run(
+            model_name=str(config.get("audio.wake.model", "hey_jarvis")),
+            threshold=(args.threshold if args.threshold is not None
+                       else float(config.get("audio.wake.threshold", 0.5))),
+            seconds=args.seconds,
+        )
 
     if args.cmd == "secrets":
         from .security import secrets as store
