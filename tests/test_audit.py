@@ -178,3 +178,57 @@ def test_reanchor_records_the_gap_it_forgives(tmp_path, monkeypatch):
     entries = fresh.tail(1)
     assert entries[0]["tool"] == "reanchor"   # the gap stays visible in the log
     assert entries[0]["ok"] is False
+
+
+def test_anchor_measures_the_file_rather_than_counting_up(tmp_path, monkeypatch):
+    # The anchor used to be prev_count + 1, so it had to stay in lockstep with
+    # a file that several processes append to. One divergence made every later
+    # verification report tampering, permanently. Counting the file instead
+    # means the anchor can only disagree when entries are actually removed.
+    _fake_keyring(monkeypatch)
+    path = tmp_path / "a.jsonl"
+    log = AuditLog(path=path, anchored=True)
+    log.record("startup")
+
+    # Another process appends straight to the file, bypassing this instance.
+    with open(path, "ab") as fh:
+        rogue = AuditLog(path=path, anchored=False)
+        rogue.record("tool_call", tool="from_another_process")
+        assert fh  # handle unused; the rogue writer did the work
+
+    log.record("turn", tool="brain")
+    intact, count, reason, missing = log.verify()
+    assert (intact, reason, missing) == (True, "", 0), (
+        f"a concurrent append must not read as tampering (got {reason})")
+    assert count == 3
+
+
+def test_a_half_written_final_line_is_not_corruption(tmp_path, monkeypatch):
+    _fake_keyring(monkeypatch)
+    path = tmp_path / "a.jsonl"
+    log = AuditLog(path=path, anchored=True)
+    log.record("startup")
+    log.record("turn", tool="brain")
+
+    # Verification catching a writer mid-append: last line has no newline yet.
+    with open(path, "ab") as fh:
+        fh.write(b'{"ts": "2026-07-30T10:00:00", "event": "tool_ca')
+
+    intact, count, reason, _ = AuditLog(path=path, anchored=True).verify()
+    assert intact is True, f"partial trailing line misreported as {reason}"
+    assert count == 2
+
+
+def test_removed_entries_are_still_caught(tmp_path, monkeypatch):
+    # The whole point of the anchor: deleting the newest entries must fail.
+    _fake_keyring(monkeypatch)
+    path = tmp_path / "a.jsonl"
+    log = AuditLog(path=path, anchored=True)
+    for i in range(5):
+        log.record("tool_call", tool=f"t{i}")
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join(lines[:-2]) + "\n", encoding="utf-8")
+
+    intact, count, reason, missing = AuditLog(path=path, anchored=True).verify()
+    assert (intact, count, reason, missing) == (False, 3, "entries_missing", 2)

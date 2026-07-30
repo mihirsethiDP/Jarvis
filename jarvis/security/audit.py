@@ -180,9 +180,16 @@ class AuditLog:
                             "the entry was written but is not in the file afterwards"
                         )
                     if self._anchored:
-                        anchor = self._load_anchor()
-                        count = (anchor["count"] + 1) if anchor else self._count_entries()
-                        self._store_anchor(entry["hash"], count)
+                        # Count the file rather than incrementing the previous
+                        # anchor. A blind +1 has to stay in lockstep with a
+                        # file that several processes append to, and every
+                        # divergence -- a dropped write, a concurrent append --
+                        # became a permanent "possible tampering" verdict that
+                        # no one could act on. Counting makes the anchor a
+                        # measurement of reality instead of a running tally, so
+                        # it can only disagree when entries are *removed*, which
+                        # is the single thing it exists to detect.
+                        self._store_anchor(entry["hash"], self._count_entries())
                 finally:
                     if locked:
                         fh.seek(_LOCK_OFFSET)
@@ -244,7 +251,13 @@ class AuditLog:
         prev = _GENESIS
         count = 0
         anchor_head_seen = False
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        text = self.path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        if lines and not text.endswith("\n"):
+            # Read caught another process mid-append. A half-written final
+            # line is not corruption — it is a record still being made.
+            lines.pop()
+        for line in lines:
             if not line.strip():
                 continue
             try:
