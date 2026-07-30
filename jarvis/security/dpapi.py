@@ -8,6 +8,7 @@ works for the same Windows user on the same machine.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -25,7 +26,16 @@ def protect_to_file(path: Path, data: bytes, description: str = "jarvis") -> boo
     except Exception:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(blob)
+    # Atomic replace, not a truncate-then-write. A reader that catches the
+    # gap gets an empty file, fails to decrypt it, and reports "not
+    # authorized" — indistinguishable from a genuinely missing sign-in.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_bytes(blob)
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        return False
     return True
 
 

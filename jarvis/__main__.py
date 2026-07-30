@@ -104,16 +104,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in (None, "run"):
         from .app import JarvisApp
 
-        open_ui = getattr(args, "open_ui", False)
-        if open_ui:
-            from .ui.launch import is_running, open_window, wait_until_up
+        from .single_instance import acquire
+        from .ui.launch import open_window, wait_until_up
 
-            port = int(config.get("ui.port", 8763))
-            if is_running(port):
-                # Already running: surface that window rather than starting a
-                # second assistant fighting over the same microphone.
+        open_ui = getattr(args, "open_ui", False)
+        port = int(config.get("ui.port", 8763))
+
+        # Held for the life of the process. A port probe is not enough: the
+        # first launch spends minutes loading models before it binds, so a
+        # second double-click in that window would start a rival assistant
+        # sharing the microphone and racing on the token and audit files.
+        if not acquire():
+            if open_ui:
                 open_window(port)
-                return 0
+            else:
+                print("Jarvis is already running on this account.")
+            return 0
+
+        if open_ui:
             threading.Thread(
                 target=lambda: wait_until_up(port) and open_window(port),
                 daemon=True, name="jarvis-open-ui",

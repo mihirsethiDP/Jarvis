@@ -16,6 +16,7 @@ and a warning is printed.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -86,7 +87,10 @@ def _store_token(creds: Credentials) -> None:
             "Warning: DPAPI unavailable — storing the Google token unencrypted in "
             f"{google_token_file()}. Install pywin32 for encrypted storage."
         )
-        google_token_file().write_bytes(payload)
+        target = google_token_file()
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(payload)
+        os.replace(tmp, target)
 
 
 def clear_token() -> None:
