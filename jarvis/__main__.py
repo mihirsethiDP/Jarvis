@@ -23,6 +23,7 @@ import os
 import sys
 
 from .config import load_config
+from .paths import cli_hint
 
 _SECRET_ALIASES = {"anthropic": "anthropic-api-key"}
 
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("setup", help="First-run consent wizard: choose what Jarvis may access")
     sub.add_parser("setup-google", help="Authorize Google Drive/Gmail access now")
+    sub.add_parser("google-status", help="Why Google access is or isn't working")
 
     voi = sub.add_parser("voices", help="Hear the Indian voices and pick one")
     voi.add_argument("--only", default=None, help="Audition a single voice by name")
@@ -134,6 +136,38 @@ def main(argv: list[str] | None = None) -> int:
         creds = get_credentials(config.google_credentials_file, config.google_scopes)
         print("Google authorization complete." if creds and creds.valid
               else "Authorization did not complete.")
+        return 0
+
+    if args.cmd == "google-status":
+        from .integrations.google_auth import (GoogleAuthError, _load_token,
+                                               get_credentials)
+
+        token = _load_token()
+        print("")
+        print("=== Google sign-in ===")
+        print("")
+        if token is None:
+            print("  Saved sign-in : none found")
+            print(f"  -> Not authorized yet. Run {cli_hint('setup-google')}.")
+            return 1
+        granted = set(token.get("granted_scopes") or token.get("scopes") or [])
+        needed = set(config.google_scopes)
+        print(f"  Saved sign-in : yes ({len(granted)} scope(s) granted)")
+        print(f"  Config needs  : {len(needed)} scope(s)")
+        for scope in sorted(needed - granted):
+            print(f"    missing: {scope}")
+        try:
+            get_credentials(config.google_credentials_file,
+                            config.google_scopes, interactive=False)
+        except GoogleAuthError as e:
+            print("  Live check    : FAILED")
+            print(f"  {e}")
+            return 1
+        print("  Live check    : OK (token valid, refreshes cleanly)")
+        print("")
+        print("  Google access is working. If Jarvis still asks you to authorize,")
+        print("  it is failing at the moment you ask - usually the network dropping")
+        print("  during the hourly token refresh.")
         return 0
 
     if args.cmd == "voices":

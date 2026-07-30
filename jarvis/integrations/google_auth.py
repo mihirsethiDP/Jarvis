@@ -125,17 +125,36 @@ def get_credentials(
     if creds and creds.valid:
         return creds
 
+    refresh_problem = ""
     if creds and creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            _store_token(creds)
-            return creds
-        except RefreshError:
-            # Revoked, scope change, or admin reset — clear and re-consent.
-            clear_token()
-            creds = None
-        except Exception:
-            creds = None
+        # Access tokens last about an hour, so most sessions begin with a
+        # refresh. On a slow network that call can fail for reasons that have
+        # nothing to do with consent — and treating those as "not authorized"
+        # is what makes Jarvis demand re-authorization session after session.
+        for attempt in range(2):
+            try:
+                creds.refresh(Request())
+                _store_token(creds)
+                return creds
+            except RefreshError as e:
+                # Only a grant Google has actually rejected justifies throwing
+                # the token away. `invalid_grant` means revoked, expired, or
+                # password-reset; anything else here may still be transient.
+                if "invalid_grant" in str(e).lower():
+                    clear_token()
+                    refresh_problem = "revoked"
+                else:
+                    refresh_problem = f"rejected: {e}"
+                creds = None
+                break
+            except Exception as e:
+                # Transport/DNS/proxy failure. Keep the token — it is very
+                # probably still good once the network comes back.
+                refresh_problem = f"unreachable: {type(e).__name__}"
+                creds = None
+                if attempt == 0:
+                    continue
+        # fall through to the messages below
 
     if not interactive:
         if missing_products:
@@ -144,8 +163,30 @@ def get_credentials(
                 f"yet ({', '.join(missing_products)} access). Run "
                 f"{cli_hint('setup-google')} to re-authorize."
             )
+        if refresh_problem == "revoked":
+            raise GoogleAuthError(
+                "Google has revoked Jarvis's access (password change, admin reset, "
+                f"or you removed it). Run {cli_hint('setup-google')} to sign in again."
+            )
+        if refresh_problem.startswith("unreachable"):
+            raise GoogleAuthError(
+                "Couldn't reach Google to refresh your sign-in — this looks like a "
+                "network problem, not a permissions one. Your authorization is "
+                "still saved; check the connection or VPN and try again. "
+                f"({refresh_problem})"
+            )
+        if refresh_problem:
+            raise GoogleAuthError(
+                f"Google refused to refresh your sign-in ({refresh_problem}). "
+                f"If this repeats, run {cli_hint('setup-google')}."
+            )
+        if _load_token() is None:
+            raise GoogleAuthError(
+                f"Google authorization required. Run {cli_hint('setup-google')} first."
+            )
         raise GoogleAuthError(
-            f"Google authorization required. Run {cli_hint('setup-google')} first."
+            "Your saved Google sign-in could not be read — it may be from another "
+            f"Windows user or a different machine. Run {cli_hint('setup-google')}."
         )
 
     if not credentials_file or not Path(credentials_file).expanduser().exists():

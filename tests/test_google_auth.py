@@ -177,3 +177,72 @@ def test_full_consent_on_first_run_succeeds(tmp_path, no_dpapi, monkeypatch):
         interactive=True,
     )
     assert creds is fake_creds
+
+
+# -- refresh failures ----------------------------------------------------
+# Reported from real use: "it's repeatedly asking me to set up Google
+# authorization". Access tokens last about an hour, so most sessions begin
+# with a refresh; every way that refresh could fail produced the same
+# "run setup-google" message, and any RefreshError deleted the token. On a
+# slow network that meant re-authorizing session after session.
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+
+def _expired_token(monkeypatch):
+    monkeypatch.setattr(ga, "_load_token", lambda: {
+        "token": "x", "refresh_token": "rt", "granted_scopes": SCOPES,
+    })
+
+
+def _creds_that_fail_refresh(monkeypatch, error):
+    def from_info(info, scopes):
+        creds = FakeCreds(valid=False, expired=True, granted_scopes=SCOPES)
+
+        def boom(request):
+            raise error
+        creds.refresh = boom
+        return creds
+    monkeypatch.setattr(ga.Credentials, "from_authorized_user_info",
+                        staticmethod(from_info))
+
+
+def test_network_failure_keeps_the_token_and_says_so(monkeypatch):
+    _expired_token(monkeypatch)
+    _creds_that_fail_refresh(monkeypatch, OSError("getaddrinfo failed"))
+    cleared = []
+    monkeypatch.setattr(ga, "clear_token", lambda: cleared.append(1))
+
+    with pytest.raises(ga.GoogleAuthError) as e:
+        ga.get_credentials("client.json", SCOPES, interactive=False)
+
+    assert not cleared, "a network blip must never throw the authorization away"
+    assert "network problem" in str(e.value)
+    assert "still saved" in str(e.value)
+
+
+def test_revoked_grant_clears_the_token(monkeypatch):
+    _expired_token(monkeypatch)
+    _creds_that_fail_refresh(
+        monkeypatch, ga.RefreshError("invalid_grant: Token has been revoked."))
+    cleared = []
+    monkeypatch.setattr(ga, "clear_token", lambda: cleared.append(1))
+
+    with pytest.raises(ga.GoogleAuthError) as e:
+        ga.get_credentials("client.json", SCOPES, interactive=False)
+
+    assert cleared == [1]
+    assert "revoked" in str(e.value)
+
+
+def test_transient_server_error_does_not_clear_the_token(monkeypatch):
+    # Not every RefreshError means the grant is dead — only invalid_grant does.
+    _expired_token(monkeypatch)
+    _creds_that_fail_refresh(monkeypatch, ga.RefreshError("internal_failure"))
+    cleared = []
+    monkeypatch.setattr(ga, "clear_token", lambda: cleared.append(1))
+
+    with pytest.raises(ga.GoogleAuthError) as e:
+        ga.get_credentials("client.json", SCOPES, interactive=False)
+
+    assert not cleared
+    assert "refused to refresh" in str(e.value)
