@@ -6,77 +6,71 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
-    --bg0: #070b14; --bg1: #03050a;
-    --ink: #d3dcef; --dim: #7a879f; --line: #16203a;
-    --warn: #ff6b6b; --good: #45d18a; --accent: #38bdf8;
+    --bg0: #05070d; --bg1: #010205;
+    --ink: #d3dcef; --dim: #78859c; --line: #151d33;
+    --warn: #ff6b6b; --good: #45d18a;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    background: radial-gradient(ellipse at 50% -10%, var(--bg0) 0%, var(--bg1) 65%);
+    background: radial-gradient(ellipse at 50% 45%, var(--bg0) 0%, var(--bg1) 70%);
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
     color: var(--ink); overflow: hidden;
-    display: grid; grid-template-columns: 1fr minmax(300px, 400px);
+    display: grid; grid-template-columns: 1fr minmax(300px, 390px);
   }
   @media (max-width: 880px) {
     body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; overflow: auto; }
     .panel { height: 38vh; border-left: none; border-top: 1px solid var(--line); }
   }
 
-  /* ── the orb ─────────────────────────────────────────────── */
+  /* -- the HUD -- */
   .stage { position: relative; display: flex; flex-direction: column;
            align-items: center; justify-content: center; min-height: 0; }
-  #orb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .brand { position: absolute; top: 2rem; font-size: .72rem; font-weight: 500;
-           letter-spacing: .55em; text-transform: uppercase; color: var(--dim);
-           text-indent: .55em; }
-  .readout { position: relative; z-index: 2; text-align: center;
-             transform: translateY(190px); pointer-events: none; width: 100%; }
-  #state { font-size: 1.25rem; font-weight: 600; letter-spacing: .04em;
-           transition: color .5s ease; }
-  #detail { margin: .55rem auto 0; max-width: 30rem; padding: 0 1.5rem;
-            font-size: .86rem; line-height: 1.5; color: var(--dim);
-            min-height: 2.6em; }
-  .fallback-orb { display: none; width: 190px; height: 190px; border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #fff 0%, var(--c,#38bdf8) 30%, #05080f 92%);
-    box-shadow: 0 0 70px 10px var(--c,#38bdf8); animation: breathe 3.2s ease-in-out infinite; }
-  @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
-  body.no-webgl #orb { display: none; }
-  body.no-webgl .fallback-orb { display: block; }
-  body.no-webgl .readout { transform: translateY(24px); }
+  #hud { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .brand { position: absolute; top: 1.8rem; font-size: .68rem; font-weight: 500;
+           letter-spacing: .58em; text-transform: uppercase; color: var(--dim);
+           text-indent: .58em; z-index: 2; }
+  .readout { position: absolute; bottom: 2.2rem; text-align: center;
+             pointer-events: none; width: 100%; z-index: 2; }
+  #state { font-size: 1.05rem; font-weight: 500; letter-spacing: .22em;
+           text-transform: uppercase; transition: color .5s ease; }
+  #detail { margin: .6rem auto 0; max-width: 30rem; padding: 0 1.5rem;
+            font-size: .85rem; line-height: 1.5; color: var(--dim); min-height: 2.6em; }
+  .no-canvas #hud { display: none; }
 
-  /* ── activity ────────────────────────────────────────────── */
-  .panel { background: #060a13cc; border-left: 1px solid var(--line);
+  /* -- activity -- */
+  .panel { background: #04070fcc; border-left: 1px solid var(--line);
            display: flex; flex-direction: column; min-height: 0; }
   .panel header { padding: 1rem 1.15rem; border-bottom: 1px solid var(--line);
                   display: flex; align-items: center; justify-content: space-between; }
-  .panel h2 { font-size: .72rem; font-weight: 600; letter-spacing: .18em;
+  .panel h2 { font-size: .7rem; font-weight: 600; letter-spacing: .18em;
               text-transform: uppercase; color: var(--dim); }
-  .live { display: flex; align-items: center; gap: .45rem; font-size: .68rem; color: var(--dim); }
-  .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--good);
+  .live { display: flex; align-items: center; gap: .45rem; font-size: .67rem; color: var(--dim); }
+  .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--good);
             animation: blink 1.8s ease-in-out infinite; }
   .live.down i { background: var(--warn); animation: none; }
   @keyframes blink { 50% { opacity: .2; } }
   #feed { overflow-y: auto; padding: .45rem; flex: 1;
           display: flex; flex-direction: column-reverse; }
   .row { display: grid; grid-template-columns: 3.5rem 1fr; gap: .55rem;
-         padding: .5rem .55rem; border-radius: 8px; font-size: .83rem; line-height: 1.45; }
+         padding: .5rem .55rem; border-radius: 8px; font-size: .82rem; line-height: 1.45; }
   .row:hover { background: #ffffff08; }
-  .row .t { font-variant-numeric: tabular-nums; color: var(--dim); font-size: .74rem; }
+  .row .t { font-variant-numeric: tabular-nums; color: var(--dim); font-size: .73rem; }
   .row b { font-weight: 600; }
-  .row .d { color: var(--dim); font-size: .77rem; word-break: break-word; margin-top: .1rem; }
-  .badge { display: inline-block; font-size: .64rem; letter-spacing: .05em;
+  .row .d { color: var(--dim); font-size: .76rem; word-break: break-word; margin-top: .1rem; }
+  .badge { display: inline-block; font-size: .63rem; letter-spacing: .05em;
            text-transform: uppercase; padding: .08rem .38rem; border-radius: 4px;
            margin-left: .4rem; border: 1px solid var(--line); color: var(--dim); }
   .row.bad b { color: var(--warn); }
   .row.bad .badge { color: var(--warn); border-color: var(--warn); }
   .row.ok .badge { color: var(--good); border-color: var(--good); }
-  .empty { color: var(--dim); font-size: .8rem; text-align: center; padding: 2.5rem 1.2rem; line-height: 1.6; }
+  .empty { color: var(--dim); font-size: .79rem; text-align: center;
+           padding: 2.5rem 1.2rem; line-height: 1.6; }
   .note { padding: .6rem 1.15rem; border-top: 1px solid var(--line);
-          font-size: .68rem; color: var(--dim); letter-spacing: .08em; text-align: center; }
+          font-size: .66rem; color: var(--dim); letter-spacing: .08em; text-align: center; }
   .quit { margin: 0 1.15rem 1.15rem; padding: .6rem; border-radius: 8px; cursor: pointer;
           background: transparent; border: 1px solid var(--line); color: var(--dim);
-          font: inherit; font-size: .78rem; letter-spacing: .04em; transition: .2s; }
+          font: inherit; font-size: .77rem; letter-spacing: .04em; transition: .2s; }
   .quit:hover { border-color: var(--warn); color: var(--warn); }
   .quit:disabled { opacity: .5; cursor: default; }
 </style>
@@ -84,10 +78,9 @@
 <body>
   <main class="stage">
     <div class="brand">Jarvis</div>
-    <canvas id="orb"></canvas>
-    <div class="fallback-orb"></div>
+    <canvas id="hud"></canvas>
     <div class="readout">
-      <div id="state">connecting…</div>
+      <div id="state">connecting</div>
       <div id="detail"></div>
     </div>
   </main>
@@ -98,169 +91,207 @@
       <span class="live" id="live"><i></i><span id="livetext">live</span></span>
     </header>
     <div id="feed"><div class="empty">Nothing yet.<br>Everything Jarvis does appears here as it happens.</div></div>
-    <div class="note" id="note">127.0.0.1 only · never leaves this machine</div>
+    <div class="note" id="note">127.0.0.1 only &middot; never leaves this machine</div>
     <button id="quit" class="quit" hidden>Quit Jarvis</button>
   </section>
 
 <script>
 "use strict";
 
-/* Each state gets its own palette and motion. The orb is the only feedback
-   you get while talking, so the states have to be told apart at a glance
-   and from across a desk — colour alone is not enough, so speed and
-   turbulence change too. */
+/* ── states ──────────────────────────────────────────────────
+   The HUD is monochrome by design, so the state has to come through in
+   motion as much as colour: how fast the rings turn, and how far the
+   spectrum ticks throw. Read from across a desk, that difference carries
+   further than hue does. */
 const STATES = {
-  starting:     { label: "starting…",           a:[0.35,0.40,0.50], b:[0.55,0.62,0.75], speed:0.30, turb:0.30, gain:0.55, rings:0.0, pulse:0.0 },
-  idle:         { label: 'say "Hey Jarvis"',    a:[0.09,0.24,0.62], b:[0.22,0.70,0.95], speed:0.28, turb:0.38, gain:0.80, rings:0.0, pulse:0.0 },
-  listening:    { label: "listening…",          a:[0.02,0.55,0.62], b:[0.30,0.92,0.92], speed:0.85, turb:0.62, gain:1.05, rings:1.0, pulse:0.0 },
-  transcribing: { label: "transcribing…",       a:[0.35,0.20,0.75], b:[0.68,0.55,0.98], speed:1.05, turb:0.85, gain:0.95, rings:0.35, pulse:0.0 },
-  thinking:     { label: "working…",            a:[0.72,0.38,0.03], b:[0.99,0.79,0.25], speed:1.45, turb:1.15, gain:1.00, rings:0.0, pulse:0.0 },
-  speaking:     { label: "speaking",            a:[0.03,0.55,0.42], b:[0.30,0.90,0.62], speed:1.00, turb:0.70, gain:1.10, rings:0.0, pulse:1.0 },
-  offline:      { label: "offline",             a:[0.30,0.07,0.07], b:[0.65,0.16,0.16], speed:0.12, turb:0.18, gain:0.45, rings:0.0, pulse:0.0 },
+  starting:     { label: "starting",     hue: 210, sat: 8,  spin: 0.25, energy: 0.18, pulse: 0.0 },
+  idle:         { label: "hey jarvis",   hue: 200, sat: 45, spin: 0.45, energy: 0.30, pulse: 0.0 },
+  listening:    { label: "listening",    hue: 186, sat: 72, spin: 1.30, energy: 1.00, pulse: 0.0 },
+  transcribing: { label: "transcribing", hue: 265, sat: 60, spin: 1.70, energy: 0.72, pulse: 0.0 },
+  thinking:     { label: "working",      hue: 40,  sat: 78, spin: 2.40, energy: 0.62, pulse: 0.0 },
+  speaking:     { label: "speaking",     hue: 155, sat: 66, spin: 0.90, energy: 0.88, pulse: 1.0 },
+  offline:      { label: "offline",      hue: 0,   sat: 50, spin: 0.06, energy: 0.05, pulse: 0.0 },
 };
-const cssOf = (s) => `rgb(${STATES[s].b.map(v => Math.round(v * 255)).join(",")})`;
 
-const VERT = `
-attribute vec2 aPos;
-void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }`;
+/* ── ring system ─────────────────────────────────────────────
+   Radii are fractions of the HUD radius, ordered inner to outer. Each
+   layer turns at its own rate and direction; that differential is what
+   makes the assembly read as machinery rather than a spinning picture.
 
-const FRAG = `
-precision highp float;
-uniform vec2  uRes;
-uniform float uTime;
-uniform vec3  uA;      // deep colour
-uniform vec3  uB;      // bright colour
-uniform float uSpeed;
-uniform float uTurb;
-uniform float uGain;
-uniform float uRings;  // expanding sonar rings while listening
-uniform float uPulse;  // heartbeat while speaking
+   Tick `len` is a fraction of the HUD radius, like `r`, so a band's reach is
+   always spaced against its neighbours. Sizing ticks in their own units let
+   bands grow into each other at some window sizes and the whole thing
+   collapsed into one grey mass — the reference reads as separate concentric
+   bands, and the gaps are what make that legible. */
+const RINGS = [
+  { type: "ring",  r: 0.045, lw: 1.0, a: 0.6 },
+  { type: "arcs",  r: 0.070, lw: 2.2, a: 1.0,  spin: -0.7, gaps: [[0, 140], [190, 95]] },
+  { type: "ring",  r: 0.095, lw: 0.8, a: 0.42 },
+  { type: "arcs",  r: 0.120, lw: 2.6, a: 0.92,  spin: 0.5, gaps: [[30, 110], [200, 70], [300, 25]] },
+  { type: "ticks", r: 0.150, lw: 1.0, a: 0.92,  n: 80,  len: 0.048, spin: -0.35, spec: 1.0, seed: 3 },
+  { type: "ring",  r: 0.225, lw: 1.3, a: 0.62 },
+  { type: "arcs",  r: 0.248, lw: 1.1, a: 0.7, spin: 0.9, gaps: [[15, 80], [130, 55], [230, 100]] },
+  { type: "ticks", r: 0.280, lw: 1.0, a: 1.0,  n: 128, len: 0.080, spin: 0.28, spec: 1.0, seed: 11 },
+  { type: "arcs",  r: 0.392, lw: 3.2, a: 0.88, spin: -0.42, gaps: [[45, 120], [210, 85]] },
+  { type: "dots",  r: 0.424, n: 72, dot: 1.1, a: 0.55, spin: -0.6 },
+  { type: "ticks", r: 0.460, lw: 1.2, a: 0.95, n: 168, len: 0.135, spin: -0.18, spec: 1.0, seed: 23 },
+  { type: "ring",  r: 0.618, lw: 0.7, a: 0.36 },
+  { type: "arcs",  r: 0.640, lw: 1.0, a: 0.65,  spin: 0.62, gaps: [[0, 65], [95, 140], [265, 60]] },
+  { type: "ticks", r: 0.690, lw: 0.8, a: 0.75,  n: 216, len: 0.092, spin: 0.14, spec: 0.75, seed: 37 },
+  { type: "ring",  r: 0.815, lw: 0.6, a: 0.28 },
+  { type: "arcs",  r: 0.850, lw: 1.5, a: 0.55,  spin: -0.25, gaps: [[70, 150], [250, 90]] },
+];
 
-float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123); }
+const TAU = Math.PI * 2;
+const RAD = Math.PI / 180;
 
-float noise(vec3 p){
-  vec3 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
-                 mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-             mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-                 mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+/* Smooth 1-D value noise. The reference's tick bands look like a spectrum
+   analyser — coherent neighbours, not per-tick randomness — so the ticks are
+   sampled from a continuous curve rather than Math.random per tick. */
+function hash(n) {
+  const s = Math.sin(n * 127.1) * 43758.5453123;
+  return s - Math.floor(s);
+}
+function noise1(x) {
+  const i = Math.floor(x), f = x - i;
+  const u = f * f * (3 - 2 * f);
+  return hash(i) * (1 - u) + hash(i + 1) * u;
 }
 
-float fbm(vec3 p){
-  float v = 0.0, amp = 0.5;
-  for (int i = 0; i < 5; i++) { v += amp * noise(p); p *= 2.02; amp *= 0.5; }
-  return v;
-}
+const canvas = document.getElementById("hud");
+const ctx = canvas.getContext ? canvas.getContext("2d") : null;
+if (!ctx) document.body.classList.add("no-canvas");
 
-void main(){
-  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
-  float r = length(p);
-  float t = uTime * uSpeed;
-
-  // Domain-warped noise gives the surface its slow churn.
-  vec3 q  = vec3(p * 2.1, t * 0.22);
-  float w = fbm(q * 1.7 + vec3(0.0, 0.0, t * 0.15));
-  float n = fbm(q + w * uTurb);
-
-  float radius = 0.185 + uPulse * 0.012 * sin(uTime * 3.4);
-  float edge   = radius + n * 0.055 * uTurb;
-
-  // Body, hot core, and the bloom that reads as "lit from inside".
-  float body = smoothstep(edge, edge - 0.10, r);
-  float core = smoothstep(edge * 0.72, 0.0, r);
-  float halo = exp(-max(r - radius, 0.0) * 7.0);
-  float rim  = smoothstep(0.045, 0.0, abs(r - edge));
-
-  vec3 col = mix(uA, uB, clamp(n * 1.25, 0.0, 1.0));
-  col = mix(col, vec3(1.0), core * 0.72);
-  col += uB * rim * 0.55;
-  col += uA * halo * 0.40;
-
-  // Sonar rings: only while listening, fading as they travel outward.
-  if (uRings > 0.01) {
-    float ring = sin((r - uTime * 0.30) * 34.0);
-    float band = smoothstep(0.0, 1.0, ring) * smoothstep(0.62, radius, r);
-    col += uB * band * 0.10 * uRings;
-  }
-
-  float alpha = clamp(body + halo * 0.55 + rim * 0.5, 0.0, 1.0);
-  gl_FragColor = vec4(col * uGain, alpha);
-}`;
-
-/* ── renderer ──────────────────────────────────────────────── */
-const canvas = document.getElementById("orb");
-let gl = null, uni = {}, current = { ...STATES.starting }, target = { ...STATES.starting };
-
-function compile(src, type) {
-  const sh = gl.createShader(type);
-  gl.shaderSource(sh, src);
-  gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
-  return sh;
-}
-
-function initGL() {
-  gl = canvas.getContext("webgl", { alpha: true, antialias: true, premultipliedAlpha: false });
-  if (!gl) throw new Error("no webgl");
-  const prog = gl.createProgram();
-  gl.attachShader(prog, compile(VERT, gl.VERTEX_SHADER));
-  gl.attachShader(prog, compile(FRAG, gl.FRAGMENT_SHADER));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
-
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(prog, "aPos");
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-  ["uRes","uTime","uA","uB","uSpeed","uTurb","uGain","uRings","uPulse"]
-    .forEach(n => uni[n] = gl.getUniformLocation(prog, n));
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-}
+let current = { ...STATES.starting };
+let target = { ...STATES.starting };
+let dpr = 1;
 
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-    canvas.width = w * dpr; canvas.height = h * dpr;
-    if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
   }
+}
+
+function stroke(alpha, width, light) {
+  const s = current.sat;
+  ctx.strokeStyle = `hsla(${current.hue}, ${s}%, ${light}%, ${alpha})`;
+  ctx.lineWidth = width;
+}
+
+function drawRing(cfg, R) {
+  ctx.beginPath();
+  ctx.arc(0, 0, cfg.r * R, 0, TAU);
+  stroke(cfg.a, cfg.lw, 92);
+  ctx.stroke();
+}
+
+function drawArcs(cfg, R, t) {
+  const rot = t * (cfg.spin || 0);
+  stroke(cfg.a, cfg.lw, 95);
+  ctx.lineCap = "butt";
+  for (const [start, sweep] of cfg.gaps) {
+    ctx.beginPath();
+    ctx.arc(0, 0, cfg.r * R, start * RAD + rot, (start + sweep) * RAD + rot);
+    ctx.stroke();
+  }
+}
+
+function drawDots(cfg, R, t) {
+  const rot = t * (cfg.spin || 0);
+  ctx.fillStyle = `hsla(${current.hue}, ${current.sat}%, 90%, ${cfg.a})`;
+  for (let i = 0; i < cfg.n; i++) {
+    const a = (i / cfg.n) * TAU + rot;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * cfg.r * R, Math.sin(a) * cfg.r * R, cfg.dot * dpr, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawTicks(cfg, R, t) {
+  const rot = t * (cfg.spin || 0);
+  // A little bloom on the spectrum bands. The reference glows; hairlines on
+  // black without it read as grey rather than lit.
+  ctx.shadowBlur = 6 * dpr;
+  ctx.shadowColor = `hsla(${current.hue}, ${current.sat}%, 70%, .55)`;
+  const r0 = cfg.r * R;
+  const maxLen = cfg.len * R;
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  for (let i = 0; i < cfg.n; i++) {
+    const a = (i / cfg.n) * TAU + rot;
+    // Two sampling rates beat together so the band never looks like it is
+    // simply repeating, which is what the reference's bands do.
+    const wobble = noise1(i * 0.11 + cfg.seed + t * 1.5) * 0.75
+                 + noise1(i * 0.37 + cfg.seed * 2 - t * 0.8) * 0.25;
+    // Wide dynamic range: the jagged silhouette is the whole character of
+    // these bands. A narrow range renders as a flat grey annulus.
+    const amp = 0.12 + wobble * 0.88 * (0.25 + 0.75 * current.energy) * cfg.spec;
+    const len = maxLen * Math.min(amp, 1);
+    const c = Math.cos(a), s = Math.sin(a);
+    ctx.moveTo(c * r0, s * r0);
+    ctx.lineTo(c * (r0 + len), s * (r0 + len));
+  }
+  stroke(cfg.a, cfg.lw, 97);
+  ctx.stroke();
+  ctx.shadowBlur = 0;   // never leak the glow onto the plain rings
+}
+
+function drawCore(R, t) {
+  // Crisp, not glowing. A soft bloom here swallowed the inner rings and read
+  // as a different object entirely from the reference's nested circles; the
+  // only lit element is a small centre that breathes while speaking, so a
+  // reply is visible without reading the caption.
+  const beat = 1 + current.pulse * Math.sin(t * 4.5) * 0.22;
+  ctx.fillStyle = `hsla(${current.hue}, ${current.sat}%, 92%, .9)`;
+  ctx.beginPath();
+  ctx.arc(0, 0, R * 0.016 * beat, 0, TAU);
+  ctx.fill();
+
+  const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.11);
+  halo.addColorStop(0, `hsla(${current.hue}, ${current.sat}%, 80%, .22)`);
+  halo.addColorStop(1, `hsla(${current.hue}, ${current.sat}%, 70%, 0)`);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(0, 0, R * 0.11, 0, TAU);
+  ctx.fill();
 }
 
 const lerp = (a, b, k) => a + (b - a) * k;
+let spinPhase = 0;
+let lastMs = 0;
 
 function frame(ms) {
+  requestAnimationFrame(frame);
+  if (!ctx) return;
   resize();
-  const k = 0.055;                       // ease between states, never snap
-  ["speed","turb","gain","rings","pulse"].forEach(p => current[p] = lerp(current[p], target[p], k));
-  ["a","b"].forEach(c => current[c] = current[c].map((v, i) => lerp(v, target[c][i], k)));
 
-  gl.uniform2f(uni.uRes, canvas.width, canvas.height);
-  gl.uniform1f(uni.uTime, ms / 1000);
-  gl.uniform3fv(uni.uA, current.a);
-  gl.uniform3fv(uni.uB, current.b);
-  gl.uniform1f(uni.uSpeed, current.speed);
-  gl.uniform1f(uni.uTurb, current.turb);
-  gl.uniform1f(uni.uGain, current.gain);
-  gl.uniform1f(uni.uRings, current.rings);
-  gl.uniform1f(uni.uPulse, current.pulse);
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
-  requestAnimationFrame(frame);
-}
+  const dt = Math.min((ms - lastMs) / 1000, 0.1) || 0;
+  lastMs = ms;
+  const k = 0.05;                       // ease between states, never snap
+  for (const p of ["hue", "sat", "spin", "energy", "pulse"]) {
+    current[p] = lerp(current[p], target[p], k);
+  }
+  // Integrate rotation so a change of speed never jumps the rings' position.
+  spinPhase += dt * current.spin;
+  const t = ms / 1000;
 
-try {
-  initGL();
-  requestAnimationFrame(frame);
-} catch (e) {
-  document.body.classList.add("no-webgl");   // CSS orb still conveys every state
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+
+  const R = Math.min(canvas.width, canvas.height) * 0.42;
+  drawCore(R, t);
+  for (const cfg of RINGS) {
+    if (cfg.type === "ring") drawRing(cfg, R);
+    else if (cfg.type === "arcs") drawArcs(cfg, R, spinPhase);
+    else if (cfg.type === "dots") drawDots(cfg, R, spinPhase);
+    else if (cfg.type === "ticks") drawTicks(cfg, R, spinPhase + t * 0.0001);
+  }
 }
+requestAnimationFrame(frame);
 
 /* ── state + activity ──────────────────────────────────────── */
 const stateEl = document.getElementById("state");
@@ -271,10 +302,10 @@ const liveText = document.getElementById("livetext");
 
 function applyState(msg) {
   const key = STATES[msg.state] ? msg.state : "idle";
-  target = { ...STATES[key] };
-  stateEl.textContent = STATES[key].label;
-  stateEl.style.color = cssOf(key);
-  document.body.style.setProperty("--c", cssOf(key));
+  const s = STATES[key];
+  target = { ...s };
+  stateEl.textContent = s.label;
+  stateEl.style.color = `hsl(${s.hue}, ${s.sat}%, 78%)`;
   detailEl.textContent = msg.detail
     ? (msg.state === "thinking" ? "“" + msg.detail + "”" : msg.detail)
     : "";
@@ -333,7 +364,7 @@ if (LOCAL) {
   quitBtn.addEventListener("click", async () => {
     quitBtn.disabled = true;
     quitBtn.textContent = "Stopping…";
-    try { await fetch("/quit", { method: "POST" }); } catch (e) { /* it died mid-reply */ }
+    try { await fetch("/quit", { method: "POST" }); } catch (e) { /* died mid-reply */ }
     applyState({ state: "offline", detail: "Jarvis has stopped. You can close this window." });
     setTimeout(() => window.close(), 800);
   });
@@ -366,20 +397,20 @@ if (LOCAL) {
 } else {
   // Static hosting: nothing to connect to, so walk the states on a loop.
   // Deliberately generic — no real names, mail or company data on a public page.
-  document.getElementById("note").textContent = "DEMO · the real orb runs on your own machine";
+  document.getElementById("note").textContent = "DEMO · the real HUD runs on your own machine";
   liveText.textContent = "demo";
   const script = [
-    { state: "idle",         detail: "",                                            wait: 3200 },
-    { state: "listening",    detail: "",                                            wait: 2600 },
-    { state: "transcribing", detail: "",                                            wait: 1200 },
-    { state: "thinking",     detail: "kal ki meeting kis time par hai?",             wait: 2600,
+    { state: "idle",         detail: "",                                             wait: 3400 },
+    { state: "listening",    detail: "",                                             wait: 2800 },
+    { state: "transcribing", detail: "",                                             wait: 1200 },
+    { state: "thinking",     detail: "kal ki meeting kis time par hai?",              wait: 2600,
       act: { ts: "10:24:02", verb: "used", tool: "list_calendar_events", decision: "ok" } },
     { state: "speaking",     detail: "Tomorrow you have two meetings — 11:00 and 15:30.", wait: 3400 },
-    { state: "idle",         detail: "",                                            wait: 2400 },
-    { state: "listening",    detail: "",                                            wait: 2200 },
-    { state: "thinking",     detail: "send that summary to the plant lead",          wait: 2200,
+    { state: "idle",         detail: "",                                             wait: 2400 },
+    { state: "listening",    detail: "",                                             wait: 2200 },
+    { state: "thinking",     detail: "send that summary to the plant lead",           wait: 2200,
       act: { ts: "10:25:41", verb: "asked you to confirm", tool: "send_email", decision: "confirmed" } },
-    { state: "speaking",     detail: "Sent.",                                       wait: 2200,
+    { state: "speaking",     detail: "Sent.",                                        wait: 2200,
       act: { ts: "10:25:44", verb: "used", tool: "send_email", decision: "ok" } },
   ];
   let i = 0;
