@@ -78,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     aud = sub.add_parser("audit", help="Show or verify the audit log")
     aud.add_argument("-n", type=int, default=20, help="How many entries to show")
     aud.add_argument("--verify", action="store_true", help="Verify the hash chain")
+    aud.add_argument("--reanchor", action="store_true",
+                     help="After reviewing a verification failure, re-point the "
+                          "anchor at the log on disk (refused if entries were edited)")
 
     args = parser.parse_args(argv)
     config = load_config(args.config)
@@ -215,10 +218,30 @@ def main(argv: list[str] | None = None) -> int:
         from .security import AuditLog
 
         log = AuditLog(anchored=True)
+        if args.reanchor:
+            intact, count, reason, missing = log.verify()
+            if intact:
+                print("Nothing to do — the audit chain already verifies.")
+                return 0
+            print(f"Verification failed: {reason}"
+                  + (f" ({missing} entry(ies) unaccounted for)" if missing else ""))
+            print("Re-anchoring accepts that those entries are gone and cannot be "
+                  "recovered. Do this only after checking why they went missing.")
+            if input("Re-anchor to the log on disk? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("Cancelled.")
+                return 1
+            ok, message = log.reanchor()
+            print(message)
+            return 0 if ok else 1
         if args.verify:
-            intact, count = log.verify_chain()
-            print(f"Audit chain {'INTACT' if intact else 'BROKEN'} ({count} entries verified).")
-            return 0 if intact else 1
+            intact, count, reason, missing = log.verify()
+            if intact:
+                print(f"Audit chain INTACT ({count} entries verified).")
+                return 0
+            print(f"Audit chain BROKEN ({count} entries verified, reason: {reason})."
+                  + (f"\n{missing} entry(ies) the anchor counted are not in the file."
+                     if missing else ""))
+            return 1
         for entry in log.tail(args.n):
             print(json.dumps(entry, ensure_ascii=False))
         return 0

@@ -23,6 +23,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import json
+import os
 import sys
 import threading
 from datetime import datetime, timezone
@@ -162,6 +163,22 @@ class AuditLog:
                     fh.seek(0, 2)
                     fh.write((json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"))
                     fh.flush()
+                    try:
+                        os.fsync(fh.fileno())
+                    except OSError:
+                        pass  # best effort; the read-back below is the real check
+                    # Prove the bytes landed before touching the anchor. A
+                    # write that is accepted and then discarded (antivirus,
+                    # folder sync, a mandatory lock held elsewhere) would
+                    # otherwise leave the anchor counting events the log never
+                    # received — and every later verification would report
+                    # "tampering" that no one can distinguish from the real
+                    # thing. Failing loudly here is the whole point: an audit
+                    # log dropping events is itself a security event.
+                    if self._read_tail_hash() != entry["hash"]:
+                        raise OSError(
+                            "the entry was written but is not in the file afterwards"
+                        )
                     if self._anchored:
                         anchor = self._load_anchor()
                         count = (anchor["count"] + 1) if anchor else self._count_entries()
@@ -173,7 +190,9 @@ class AuditLog:
         except OSError as e:
             if not self._warned_degraded:
                 self._warned_degraded = True
-                print(f"Warning: audit log unwritable ({e}) — events are being dropped.",
+                print(f"SECURITY WARNING: the audit log is not recording ({e}). "
+                      "Jarvis is still running but its activity is NOT being logged. "
+                      "Check antivirus or folder-sync interference on the log file.",
                       file=sys.stderr)
         self._notify(entry)
 
@@ -193,14 +212,34 @@ class AuditLog:
     def verify_chain(self) -> tuple[bool, int]:
         """Walk the whole log verifying the hash chain (and anchor, if any).
 
-        Returns (intact, entries_checked). A broken link means the file was
-        edited in place; an anchor mismatch means the newest entries were
-        removed or the file was replaced wholesale.
+        Returns (intact, entries_checked). See `verify` for why the failure
+        actually happened.
+        """
+        intact, count, _, _ = self.verify()
+        return intact, count
+
+    def verify(self) -> tuple[bool, int, str, int]:
+        """Verify the chain and report *how* it failed.
+
+        Returns (intact, entries_checked, reason, missing). The reason matters
+        because the failures are not equally alarming:
+
+        - ``entry_modified`` / ``chain_broken`` — an entry in the file was
+          edited. The file itself is evidence of tampering.
+        - ``entries_missing`` — every entry present is perfectly chained, but
+          the anchor counted more than the file holds. That is either a
+          truncated tail (tampering) *or* writes the filesystem accepted and
+          discarded. Both are real; they need different responses, so callers
+          must not report one as the other.
+
+        ``missing`` is how many entries the anchor counted beyond the file.
         """
         anchor = self._load_anchor() if self._anchored else None
 
         if not self.path.exists():
-            return (anchor is None or anchor.get("count", 0) == 0), 0
+            if anchor and anchor.get("count", 0) > 0:
+                return False, 0, "entries_missing", anchor["count"]
+            return True, 0, "", 0
 
         prev = _GENESIS
         count = 0
@@ -211,21 +250,54 @@ class AuditLog:
             try:
                 entry = json.loads(line)
             except json.JSONDecodeError:
-                return False, count
+                return False, count, "unreadable_entry", 0
             expected = entry.pop("hash", None)
             if entry.get("prev_hash") != prev:
-                return False, count
+                return False, count, "chain_broken", 0
             body = json.dumps(entry, ensure_ascii=False, sort_keys=True)
             if hashlib.sha256(body.encode("utf-8")).hexdigest() != expected:
-                return False, count
+                return False, count, "entry_modified", 0
             prev = expected
             count += 1
             if anchor and expected == anchor.get("head"):
                 anchor_head_seen = True
 
         if anchor:
-            if count < anchor.get("count", 0):
-                return False, count  # newest entries were removed
-            if not anchor_head_seen and anchor.get("count", 0) > 0:
-                return False, count  # anchored head is gone — file replaced
-        return True, count
+            anchored_count = anchor.get("count", 0)
+            if count < anchored_count:
+                return False, count, "entries_missing", anchored_count - count
+            if not anchor_head_seen and anchored_count > 0:
+                # Head absent although the file is long enough: the tail was
+                # replaced rather than merely shortened.
+                return False, count, "anchor_head_absent", 0
+        return True, count, "", 0
+
+    def reanchor(self) -> tuple[bool, str]:
+        """Re-point the anchor at the current file, after drift was reviewed.
+
+        Deliberately narrow: this is refused unless every entry in the file
+        chains correctly, so a *modified* log can never be papered over. The
+        re-anchor is itself written to the log first, leaving the gap
+        permanently visible instead of erasing the evidence.
+        """
+        intact, count, reason, missing = self.verify()
+        if reason in ("chain_broken", "entry_modified", "unreadable_entry"):
+            return False, (
+                f"Refusing to re-anchor: the log's own chain is broken ({reason}). "
+                "Entries were modified — preserve this file and report it."
+            )
+        was_anchored, self._anchored = self._anchored, False
+        try:
+            self.record("audit", tool="reanchor",
+                        detail=f"anchor was ahead by {missing} entry(ies); "
+                               f"re-anchored to {count + 1} on disk",
+                        decision="cli", ok=False)
+        finally:
+            self._anchored = was_anchored
+        head = self._read_tail_hash()
+        self._store_anchor(head, self._count_entries())
+        return True, (
+            f"Re-anchored to the {self._count_entries()} entries on disk. "
+            f"{missing} entry(ies) the anchor had counted are gone for good — "
+            "that gap is now recorded in the log itself."
+        )

@@ -182,16 +182,30 @@ def run_checks(config: Config) -> list[Finding]:
 
     # -- 6. audit log integrity -------------------------------------------
     log = AuditLog(anchored=True)
-    intact, count = log.verify_chain()
+    intact, count, reason, missing = log.verify()
     if intact:
         add(Finding("ok", f"Audit chain intact ({count} entries verified)"))
+    elif reason == "entries_missing":
+        # Every entry present is correctly chained; the anchor simply counted
+        # more. Reporting this as "the log was edited" would be false, and
+        # would train people to ignore the one check that catches real edits.
+        add(Finding(
+            "risk", f"{missing} audit entry(ies) recorded but absent from the log",
+            f"The {count} entries in the file chain perfectly — none were altered. "
+            f"But the keyring anchor counted {count + missing}, so {missing} "
+            "never reached disk or were removed from the end.",
+            "Check antivirus / folder-sync interference on the log file first, and "
+            "look for a 'SECURITY WARNING: the audit log is not recording' message. "
+            "If neither explains it, treat it as tail truncation and report it. "
+            "Once reviewed: `jarvis audit --reanchor`.",
+        ))
     else:
         add(Finding(
             "risk", "Audit log fails verification",
-            f"The hash chain breaks after {count} entries — the log was edited, "
-            "truncated, or replaced.",
+            f"The hash chain breaks after {count} entries ({reason}) — an entry "
+            "in the log was edited or replaced.",
             "Treat as a possible tampering event: preserve the file, review "
-            "recent activity, and report it.",
+            "recent activity, and report it. Re-anchoring is refused for this.",
         ))
 
     # -- 7. spend brake ----------------------------------------------------
