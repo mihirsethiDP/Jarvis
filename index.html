@@ -74,6 +74,11 @@
   .empty { color: var(--dim); font-size: .8rem; text-align: center; padding: 2.5rem 1.2rem; line-height: 1.6; }
   .note { padding: .6rem 1.15rem; border-top: 1px solid var(--line);
           font-size: .68rem; color: var(--dim); letter-spacing: .08em; text-align: center; }
+  .quit { margin: 0 1.15rem 1.15rem; padding: .6rem; border-radius: 8px; cursor: pointer;
+          background: transparent; border: 1px solid var(--line); color: var(--dim);
+          font: inherit; font-size: .78rem; letter-spacing: .04em; transition: .2s; }
+  .quit:hover { border-color: var(--warn); color: var(--warn); }
+  .quit:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
@@ -94,6 +99,7 @@
     </header>
     <div id="feed"><div class="empty">Nothing yet.<br>Everything Jarvis does appears here as it happens.</div></div>
     <div class="note" id="note">127.0.0.1 only · never leaves this machine</div>
+    <button id="quit" class="quit" hidden>Quit Jarvis</button>
   </section>
 
 <script>
@@ -320,6 +326,18 @@ const LOCAL = location.protocol === "http:"
   && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
 
 if (LOCAL) {
+  // Launched from the desktop shortcut there is no terminal to Ctrl+C, so
+  // the page has to be able to stop the assistant.
+  const quitBtn = document.getElementById("quit");
+  quitBtn.hidden = false;
+  quitBtn.addEventListener("click", async () => {
+    quitBtn.disabled = true;
+    quitBtn.textContent = "Stopping…";
+    try { await fetch("/quit", { method: "POST" }); } catch (e) { /* it died mid-reply */ }
+    applyState({ state: "offline", detail: "Jarvis has stopped. You can close this window." });
+    setTimeout(() => window.close(), 800);
+  });
+
   let keepalive = null;
   (function connect() {
     const ws = new WebSocket(`ws://${location.host}/ws`);
