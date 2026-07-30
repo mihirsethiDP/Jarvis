@@ -59,6 +59,10 @@ def capability_specs(config: Config) -> list[tuple[str, str, str]]:
          "look up a colleague's email or phone number by name"),
         ("ask_claude", "Ask Claude",
          "send self-contained prompts to Claude for drafting and summarising"),
+        ("weather_read", "Weather",
+         "look up the weather (public data, no company information involved)"),
+        ("web_search", "Web search",
+         "search the web for news and current information"),
         ("code_run", "Run code (POWERFUL — deny if unsure)",
          "write and run small sandboxed programs on this computer; no network "
          "or system access, you approve the exact code, but this is the most "
