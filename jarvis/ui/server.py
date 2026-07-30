@@ -13,18 +13,19 @@ from collections import deque
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
 
 _STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 class StateServer:
-    def __init__(self, port: int = 8763):
+    def __init__(self, port: int = 8763, on_quit=None):
         # Hard-coded loopback — the page shows live conversation content, so a
         # LAN-reachable bind is never acceptable regardless of config.
         self.host = "127.0.0.1"
         self.port = port
+        self.on_quit = on_quit
         self._state = {"state": "starting", "detail": ""}
         # Rolling record of what Jarvis actually did, so the employee can
         # watch each step rather than trusting a summary after the fact.
@@ -47,6 +48,19 @@ class StateServer:
                     "Jarvis UI assets missing — reinstall the package.", status_code=500
                 )
             return HTMLResponse(_STATIC.read_text(encoding="utf-8"))
+
+        @app.post("/quit")
+        async def quit_(request: Request) -> JSONResponse:
+            # Same-origin only. Loopback is reachable from any page the
+            # employee happens to have open, so without this check a random
+            # website could POST here and stop the assistant.
+            origin = request.headers.get("origin")
+            allowed = {f"http://{h}:{self.port}" for h in ("127.0.0.1", "localhost")}
+            if origin not in allowed:
+                return JSONResponse({"error": "forbidden"}, status_code=403)
+            if self.on_quit is not None:
+                self.on_quit()
+            return JSONResponse({"ok": True})
 
         @app.websocket("/ws")
         async def ws(websocket: WebSocket) -> None:
@@ -101,7 +115,7 @@ class StateServer:
         "tool_call": "used", "permission": "asked permission for",
         "confirmation": "asked you to confirm", "turn": "handled",
         "startup": "started", "error": "hit an error in", "setup": "setup",
-        "memory": "memory",
+        "memory": "memory", "voice": "switched to",
     }
 
     def record_activity(self, entry: dict) -> None:

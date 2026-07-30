@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+from datetime import datetime
 
 from .brain import JarvisAgent
 from .config import Config
@@ -48,6 +50,7 @@ class JarvisApp:
         self.config = config
         self.audit = AuditLog(anchored=True)
         self.state_server = None
+        self._stop = threading.Event()
 
         if with_ui or config.get("ui.enabled", False):
             try:
@@ -55,7 +58,8 @@ class JarvisApp:
 
                 # Loopback only, by design — the page shows live conversation
                 # state and must never be reachable from the LAN.
-                self.state_server = StateServer(port=int(config.get("ui.port", 8763)))
+                self.state_server = StateServer(port=int(config.get("ui.port", 8763)),
+                                               on_quit=self._quit_from_ui)
                 # Every gated action already flows through the audit log, so
                 # subscribing here gives the live view complete coverage.
                 self.audit.subscribe(self.state_server.record_activity)
@@ -109,6 +113,31 @@ class JarvisApp:
         if self.state_server is not None:
             self.state_server.publish(state, detail)
 
+    def _quit_from_ui(self) -> None:
+        """Quit button on the status page. The voice loop notices within a
+        second; the watchdog covers the case where it is wedged in a blocking
+        audio call and would otherwise leave a process with no window."""
+        self.audit.record("shutdown", detail="quit from status page", decision="ui")
+        self._stop.set()
+        threading.Timer(4.0, lambda: os._exit(0)).start()
+
+    def _note_voice_engine(self, engine: str, reason: str) -> None:
+        """Surface a change of speaking voice on the status page.
+
+        Without this the accent silently switches to US English mid-session
+        and looks like a broken setting rather than a network problem.
+        """
+        if self.state_server is None:
+            return
+        self.state_server.record_activity({
+            "ts": datetime.now().isoformat(),
+            "event": "voice",
+            "tool": "Indian voice" if engine == "edge" else "offline voice (US English)",
+            "detail": reason,
+            "decision": "restored" if engine == "edge" else "degraded",
+            "ok": engine == "edge",
+        })
+
     def _try_build_voice(self):
         try:
             from .audio.microphone import Microphone
@@ -135,7 +164,8 @@ class JarvisApp:
             recorder = UtteranceRecorder(
                 mic,
                 max_seconds=float(cfg.get("audio.stt.max_seconds", 20)),
-                silence_seconds=float(cfg.get("audio.stt.silence_seconds", 1.2)),
+                silence_seconds=float(cfg.get("audio.stt.silence_seconds", 1.8)),
+                min_speech_seconds=float(cfg.get("audio.stt.min_speech_seconds", 0.7)),
             )
             stt = Transcriber(
                 model_size=str(cfg.get("audio.stt.model_size", "base.en")),
@@ -156,6 +186,7 @@ class JarvisApp:
                     voice_en=str(cfg.get("audio.tts.edge_voice_en", "en-IN-NeerjaNeural")),
                     voice_hi=str(cfg.get("audio.tts.edge_voice_hi", "hi-IN-SwaraNeural")),
                     fallback=offline_speaker,
+                    on_engine=self._note_voice_engine,
                 )
             else:
                 speaker = offline_speaker
@@ -267,7 +298,8 @@ class JarvisApp:
                 # never take the whole assistant down.
                 try:
                     self._publish("idle")
-                    v["wake"].wait()
+                    if not v["wake"].wait(should_stop=self._stop.is_set):
+                        return          # Quit pressed while waiting for the wake word
                     self._publish("listening")
                     print("(wake word detected — listening…)")
                     audio = v["recorder"].record()

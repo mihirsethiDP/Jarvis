@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import threading
 import json
 import os
 import sys
@@ -45,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", help="Path to a config YAML override", default=None)
     parser.add_argument("--text", action="store_true", help="Console chat mode (no mic)")
     parser.add_argument("--ui", action="store_true", help="Serve the local status page")
+    parser.add_argument("--open-ui", action="store_true",
+                        help="Open the orb in an app window (used by the desktop shortcut)")
     sub = parser.add_subparsers(dest="cmd")
 
     # The run subparser accepts the same flags, but with SUPPRESS defaults so
@@ -57,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="Console chat mode (no mic)")
     run_p.add_argument("--ui", action="store_true", default=argparse.SUPPRESS,
                        help="Serve the local status page")
+    run_p.add_argument("--open-ui", action="store_true", default=argparse.SUPPRESS,
+                       help="Open the orb in an app window (used by the desktop shortcut)")
 
     sub.add_parser("setup", help="First-run consent wizard: choose what Jarvis may access")
     sub.add_parser("setup-google", help="Authorize Google Drive/Gmail access now")
@@ -97,8 +102,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in (None, "run"):
         from .app import JarvisApp
 
+        open_ui = getattr(args, "open_ui", False)
+        if open_ui:
+            from .ui.launch import is_running, open_window, wait_until_up
+
+            port = int(config.get("ui.port", 8763))
+            if is_running(port):
+                # Already running: surface that window rather than starting a
+                # second assistant fighting over the same microphone.
+                open_window(port)
+                return 0
+            threading.Thread(
+                target=lambda: wait_until_up(port) and open_window(port),
+                daemon=True, name="jarvis-open-ui",
+            ).start()
+
         app = JarvisApp(config, force_text=getattr(args, "text", False),
-                        with_ui=getattr(args, "ui", False))
+                        with_ui=getattr(args, "ui", False) or open_ui)
         app.run()
         return 0
 

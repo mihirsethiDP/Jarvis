@@ -42,10 +42,17 @@ class WakeWordDetector:
             openwakeword.utils.download_models()
             return Model(wakeword_models=[model_name], inference_framework="onnx")
 
-    def wait(self) -> None:
-        """Block until the wake phrase is heard."""
+    def wait(self, should_stop=None) -> bool:
+        """Block until the wake phrase is heard.
+
+        Returns True when the phrase fired, False if *should_stop* went true
+        first — the Quit button has to be able to end a session that is
+        sitting idle waiting for a wake word, which is most of the time.
+        """
         buffer = np.empty(0, dtype=np.int16)
         while True:
+            if should_stop is not None and should_stop():
+                return False
             block = self.mic.read(timeout=1.0)
             if block is None:
                 continue
@@ -57,4 +64,4 @@ class WakeWordDetector:
                     self.model.reset()
                     self.mic.drain()
                     time.sleep(0.05)
-                    return
+                    return True
