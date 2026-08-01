@@ -3,12 +3,18 @@ from __future__ import annotations
 import pytest
 
 import jarvis.app as app_mod
+import jarvis.single_instance as single_instance
 from jarvis.__main__ import main
 
 
 @pytest.fixture
 def fake_app(monkeypatch):
     calls: dict = {}
+
+    # The single-instance lock lives in the real %APPDATA%, so a Jarvis running
+    # on the developer's own machine would otherwise make every one of these
+    # tests fail with "already running".
+    monkeypatch.setattr(single_instance, "acquire", lambda: True)
 
     class FakeApp:
         def __init__(self, config, *, force_text=False, with_ui=False):

@@ -15,6 +15,7 @@ import anthropic
 from ..config import Config
 from ..memory import MemoryStore
 from ..security import AuditLog
+from .narration import describe_tool
 from .prompts import build_system_prompt
 
 
@@ -25,7 +26,8 @@ class JarvisAgent:
         tools: list,
         audit: AuditLog,
         *,
-        on_status: Callable[[str], None] | None = None,
+        on_status: Callable[..., None] | None = None,
+        on_narrate: Callable[[str], None] | None = None,
         memory: MemoryStore | None = None,
         recall_check: Callable[[], bool] | None = None,
         turn_budget=None,
@@ -33,7 +35,12 @@ class JarvisAgent:
         self.config = config
         self.tools = tools
         self.audit = audit
-        self.on_status = on_status or (lambda _state: None)
+        self.on_status = on_status or (lambda *_a: None)
+        # Spoken narration. Tool work is where the seconds go, and the user
+        # otherwise sits in silence with no idea whether Jarvis is working,
+        # stuck, or finished.
+        self.on_narrate = on_narrate or (lambda _text: None)
+        self._narrated: set[str] = set()
         self.client = anthropic.Anthropic()
         self.name = str(config.get("assistant.name", "Jarvis"))
         self.memory = memory
@@ -78,6 +85,9 @@ class JarvisAgent:
         # once) guarantees no dangling tool_use is left to 400 every later turn.
         checkpoint = len(self.messages)
         self.messages.append({"role": "user", "content": user_text})
+        # Per turn, not per session: the user needs telling every time work
+        # starts, not only the first time this tool was ever used.
+        self._narrated.clear()
         self.on_status("thinking")
 
         try:
@@ -124,12 +134,23 @@ class JarvisAgent:
                 # Refusal turns are terminal — executing their tool_use blocks
                 # would fire side effects the model never confirmed.
                 continue
+            # Announce BEFORE running the tools, not after. Reporting a tool
+            # once its result is already in hand tells the user nothing during
+            # the wait, which is the only time they need telling.
+            pending = [b for b in message.content if b.type == "tool_use"]
+            for block in pending:
+                phrase = describe_tool(block.name, getattr(block, "input", None) or {})
+                # "tool:<name>" was published as if it were a *state*; the
+                # status page knows no such state and fell back to idle, so
+                # the display went quiet exactly when work started.
+                self.on_status("working", phrase)
+                if block.name not in self._narrated:
+                    self._narrated.add(block.name)
+                    self.on_narrate(phrase)
+
             tool_response = runner.generate_tool_call_response()
             if tool_response is not None:
                 self.messages.append(tool_response)
-                for block in message.content:
-                    if block.type == "tool_use":
-                        self.on_status(f"tool:{block.name}")
 
         if last is None:
             return "I didn't get a response — please try again."

@@ -129,3 +129,119 @@ def test_unconfigured_chat_app_error_gets_actionable_hint(tmp_path, audit):
     out = {t.name: t for t in gchat_mod.build_tools(ctx)}["send_chat_message"]("spaces/A", "hi")
     assert "Configuration tab" in out
     assert "Reading Chat works without it" in out
+
+
+# -- person -> direct message -------------------------------------------
+# Reported from real use: "I have a chat/DM with Ranjana Majumdar but Jarvis
+# came back stating that he cannot find any space with her." Confirmed against
+# the live account: all 30 DMs return displayName=None, so name matching can
+# never find one, and spaces.list was reading only the first of three pages.
+
+def _dual_service(chat, people):
+    """google_service() dispatches by api name; DMs need both."""
+    return lambda api, version: people if api == "people" else chat
+
+
+def _directory(*entries):
+    people = MagicMock()
+    people.people().searchDirectoryPeople.return_value.execute.return_value = {
+        "people": [
+            {"resourceName": f"people/{pid}",
+             "names": [{"displayName": name}],
+             "emailAddresses": [{"value": email}]}
+            for pid, name, email in entries
+        ]
+    }
+    return people
+
+
+def test_direct_message_is_found_by_person_name(tmp_path, audit):
+    chat = MagicMock()
+    chat.spaces().findDirectMessage.return_value.execute.return_value = {
+        "name": "spaces/0LhmHiAAAAE", "spaceType": "DIRECT_MESSAGE"}
+    people = _directory(("113180519160746191627", "Ranjana Majumdar",
+                         "ranjana.majumdar@digitalpaani.com"))
+    ctx = make_ctx(tmp_path, audit, ["allow once", "allow once"], chat)
+    ctx.google_service = _dual_service(chat, people)
+
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["find_direct_message"]("Ranjana")
+    assert "spaces/0LhmHiAAAAE" in out
+    assert "Ranjana Majumdar" in out
+    # The People resource id must be handed to Chat as a users/ id.
+    chat.spaces().findDirectMessage.assert_called_with(
+        name="users/113180519160746191627")
+
+
+def test_two_people_with_the_same_name_are_never_guessed(tmp_path, audit):
+    chat = MagicMock()
+    people = _directory(("1", "Priya Rao", "priya.rao@digitalpaani.com"),
+                        ("2", "Priya Nair", "priya.nair@digitalpaani.com"))
+    ctx = make_ctx(tmp_path, audit, ["allow once", "allow once"], chat)
+    ctx.google_service = _dual_service(chat, people)
+
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["find_direct_message"]("Priya")
+    assert "AMBIGUOUS" in out
+    assert "priya.rao@digitalpaani.com" in out and "priya.nair@digitalpaani.com" in out
+    chat.spaces().findDirectMessage.assert_not_called()
+
+
+def test_no_existing_dm_explains_instead_of_dead_ending(tmp_path, audit):
+    chat = MagicMock()
+    chat.spaces().findDirectMessage.return_value.execute.side_effect = RuntimeError(
+        '<HttpError 404 ... "Requested entity was not found.">')
+    people = _directory(("9", "Arun Kumar", "arun.kumar@digitalpaani.com"))
+    ctx = make_ctx(tmp_path, audit, ["allow once", "allow once"], chat)
+    ctx.google_service = _dual_service(chat, people)
+
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["find_direct_message"]("Arun")
+    assert "no existing Chat direct message" in out
+    assert "arun.kumar@digitalpaani.com" in out   # offers a usable alternative
+
+
+def test_unknown_person_asks_for_more_detail(tmp_path, audit):
+    chat = MagicMock()
+    people = _directory()
+    ctx = make_ctx(tmp_path, audit, ["allow once", "allow once"], chat)
+    ctx.google_service = _dual_service(chat, people)
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["find_direct_message"]("Zoltan")
+    assert "company directory" in out
+    assert "full name or email" in out
+
+
+def test_space_listing_follows_pagination(tmp_path, audit):
+    # The live account has 274 spaces across 3 pages; reading page one only
+    # reported spaces that exist as missing.
+    chat = MagicMock()
+    pages = [
+        {"spaces": [{"name": "spaces/A", "displayName": "Page One Space",
+                     "spaceType": "SPACE"}], "nextPageToken": "t1"},
+        {"spaces": [{"name": "spaces/B", "displayName": "Plant Ops",
+                     "spaceType": "SPACE"}]},
+    ]
+    chat.spaces().list.return_value.execute.side_effect = pages
+    ctx = make_ctx(tmp_path, audit, ["allow once"], chat)
+    out = {t.name: t for t in gchat_mod.build_tools(ctx)}["list_chat_spaces"]("plant")
+    assert "Plant Ops" in out, "a space on page two was reported as missing"
+
+
+def test_send_confirms_with_a_human_name_not_a_space_id(tmp_path, audit):
+    # Confirming "send to spaces/0LhmHiAAAAE" cannot be checked by a human,
+    # which makes the confirmation gate worthless.
+    chat = MagicMock()
+    chat.spaces().findDirectMessage.return_value.execute.return_value = {
+        "name": "spaces/0LhmHiAAAAE", "spaceType": "DIRECT_MESSAGE"}
+    chat.spaces().messages().create.return_value.execute.return_value = {
+        "name": "spaces/0LhmHiAAAAE/messages/1"}
+    people = _directory(("113", "Ranjana Majumdar", "ranjana.majumdar@digitalpaani.com"))
+    io = FakeIO(["allow once", "allow once", "allow once", "yes"])
+    pm = PermissionManager(io, audit, store_path=tmp_path / "perms.json")
+    ctx = ToolContext(config=Config(raw={}), permissions=pm,
+                      confirmer=Confirmer(io, audit), audit=audit)
+    ctx.google_service = _dual_service(chat, people)
+    tools = {t.name: t for t in gchat_mod.build_tools(ctx)}
+
+    tools["find_direct_message"]("Ranjana")          # caches the human label
+    out = tools["send_chat_message"]("spaces/0LhmHiAAAAE", "I'll join at four")
+    assert "Ranjana Majumdar" in out
+    asked = " ".join(io.asked)
+    assert "Ranjana Majumdar" in asked, "the user was asked to confirm an opaque id"

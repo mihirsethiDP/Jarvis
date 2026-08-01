@@ -117,6 +117,7 @@ _TOOL_CAPABILITIES = {
     "read_email": "email_read",
     "send_email": "email_send",
     "organize_email": "email_organize",
+    "find_direct_message": "chat_read",
     "list_chat_spaces": "chat_read",
     "read_chat_messages": "chat_read",
     "send_chat_message": "chat_send",

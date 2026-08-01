@@ -109,6 +109,9 @@ const STATES = {
   listening:    { label: "listening",    hue: 186, sat: 72, spin: 1.30, energy: 1.00, pulse: 0.0 },
   transcribing: { label: "transcribing", hue: 265, sat: 60, spin: 1.70, energy: 0.72, pulse: 0.0 },
   thinking:     { label: "working",      hue: 40,  sat: 78, spin: 2.40, energy: 0.62, pulse: 0.0 },
+  // Published while a tool runs. Without it the HUD fell back to "idle"
+  // during the longest part of a turn and looked like it had stopped.
+  working:      { label: "working",      hue: 40,  sat: 78, spin: 2.40, energy: 0.62, pulse: 0.0 },
   speaking:     { label: "speaking",     hue: 155, sat: 66, spin: 0.90, energy: 0.88, pulse: 1.0 },
   offline:      { label: "offline",      hue: 0,   sat: 50, spin: 0.06, energy: 0.05, pulse: 0.0 },
 };
@@ -307,7 +310,7 @@ function applyState(msg) {
   stateEl.textContent = s.label;
   stateEl.style.color = `hsl(${s.hue}, ${s.sat}%, 78%)`;
   detailEl.textContent = msg.detail
-    ? (msg.state === "thinking" ? "“" + msg.detail + "”" : msg.detail)
+    ? ((msg.state === "thinking") ? "“" + msg.detail + "”" : msg.detail)
     : "";
 }
 

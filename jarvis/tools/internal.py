@@ -46,6 +46,7 @@ _BUILTIN_TOOL_NAMES = {
     "drive_search", "drive_read", "drive_save_text", "drive_upload",
     "search_email", "read_email", "send_email", "organize_email",
     "list_chat_spaces", "read_chat_messages", "send_chat_message",
+    "find_direct_message",
     "list_calendar_events", "check_availability",
     "create_calendar_event", "delete_calendar_event",
     "find_colleague", "ask_ai_tool", "ask_claude", "run_code", "search_web", "get_weather", "remember", "forget_fact",

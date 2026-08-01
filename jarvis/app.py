@@ -98,6 +98,7 @@ class JarvisApp:
                   f"allowing recall: {cli_hint('setup')}")
         self.agent = JarvisAgent(
             config, build_all_tools(ctx), self.audit, on_status=self._publish,
+            on_narrate=self._narrate,
             memory=self.memory,
             # Asked once per session, and only when memory is non-empty, so a
             # standing denial blocks injection and "ask" genuinely asks.
@@ -120,6 +121,22 @@ class JarvisApp:
         self.audit.record("shutdown", detail="quit from status page", decision="ui")
         self._stop.set()
         threading.Timer(4.0, lambda: os._exit(0)).start()
+
+    def _narrate(self, phrase: str) -> None:
+        """Say aloud what Jarvis is about to do.
+
+        Tool calls are where a turn's seconds go, and until now the user
+        finished speaking and then heard nothing at all until the whole thing
+        was done. Narration is best-effort: a TTS hiccup must never take down
+        the turn it was only describing.
+        """
+        voice = self.voice
+        if not voice:
+            return
+        try:
+            voice["speaker"].say(phrase)
+        except Exception:
+            pass
 
     def _note_voice_engine(self, engine: str, reason: str) -> None:
         """Surface a change of speaking voice on the status page.
