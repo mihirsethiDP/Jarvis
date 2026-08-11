@@ -183,11 +183,17 @@ class JarvisApp:
                 model_name=str(cfg.get("audio.wake.model", "hey_jarvis")),
                 threshold=float(cfg.get("audio.wake.threshold", 0.5)),
             )
+            # Voice-activity detection, when the model loads. Falls back to
+            # RMS energy, which cannot tell a fan from a voice.
+            from .audio.vad import try_build as _build_vad
+
+            detector = _build_vad(bool(cfg.get("audio.vad.enabled", True)))
             recorder = UtteranceRecorder(
                 mic,
+                detector=detector,
                 max_seconds=float(cfg.get("audio.stt.max_seconds", 20)),
                 silence_seconds=float(cfg.get("audio.stt.silence_seconds", 1.8)),
-                min_speech_seconds=float(cfg.get("audio.stt.min_speech_seconds", 0.7)),
+                min_speech_seconds=float(cfg.get("audio.stt.min_speech_seconds", 0.3)),
             )
             stt = Transcriber(
                 model_size=str(cfg.get("audio.stt.model_size", "base.en")),

@@ -32,6 +32,12 @@ audio:
     engine: openwakeword    # openwakeword (offline, free)
     model: hey_jarvis       # pretrained openWakeWord model
     threshold: 0.5
+  # Voice-activity detection decides when you have stopped speaking. Set
+  # enabled: false to fall back to loudness-based endpointing, which is
+  # noticeably worse in a room with a fan or nearby conversation.
+  vad:
+    enabled: true
+
   stt:
     engine: faster-whisper  # faster-whisper (offline) | google (online)
     model_size: base.en     # tiny.en | base.en | small.en ... (use "small" for Hindi)
@@ -40,7 +46,14 @@ audio:
     # Anything but "en" auto-upgrades a ".en" model to its multilingual twin.
     language: en
     max_seconds: 20         # hard cap on a single utterance
-    silence_seconds: 1.2    # end of speech after this much silence
+    # End of speech after this much silence. 1.2 cut people off at the pause
+    # they take mid-sentence; measured, a 1.4s thinking pause truncated the
+    # request to its opening fragment.
+    silence_seconds: 1.8
+    # Ignore bursts shorter than this when deciding an utterance has ended.
+    # Kept low because "yes" and "haan" are ~0.3s and are the most frequent
+    # things anyone says to Jarvis.
+    min_speech_seconds: 0.3
   # After Jarvis replies, keep listening this many seconds for a follow-up
   # ("no wait, I misspoke") with no wake word needed. 0 disables.
   follow_up_seconds: 8

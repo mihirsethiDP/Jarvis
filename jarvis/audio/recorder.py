@@ -26,12 +26,16 @@ class UtteranceRecorder:
         silence_seconds: float = 1.8,
         start_window_seconds: float = 6.0,
         min_speech_seconds: float = 0.3,
+        detector=None,
     ):
         self.mic = mic
         self.max_seconds = max_seconds
         self.silence_seconds = silence_seconds
         self.start_window_seconds = start_window_seconds
         self.min_speech_seconds = min_speech_seconds
+        # A voice-activity model when one is available; None falls back to the
+        # RMS-energy path below, which cannot tell speech from a fan.
+        self.detector = detector
 
     def record(self, start_window: float | None = None) -> np.ndarray:
         """Record one utterance; returns float32 mono 16 kHz audio (may be empty).
@@ -47,6 +51,10 @@ class UtteranceRecorder:
                 listener passes its own, shorter window here.
         """
         window = self.start_window_seconds if start_window is None else start_window
+        if self.detector is not None:
+            # The model carries state between frames; without this the tail of
+            # the last utterance bleeds into the start of this one.
+            self.detector.reset()
         blocks: list[np.ndarray] = []
         noise_rms = 150.0  # prior on int16 scale; adapts to the room below
         speech_started = False
@@ -62,15 +70,24 @@ class UtteranceRecorder:
             elapsed += _BLOCK_SECONDS
             rms = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
 
-            # Hysteresis: it takes a clear signal to *start* an utterance, but
-            # much less to stay in one. Without this, the dips between words —
-            # and the breath people take mid-sentence — read as silence, and
-            # the recording ends while they are still talking.
-            if speech_started:
-                threshold = max(noise_rms * 1.8, 180.0)
+            if self.detector is not None:
+                # Asks the real question — "is anyone speaking?" — instead of
+                # inferring it from loudness. A fan, a keyboard, or a
+                # colleague's chair all clear an energy threshold; none of
+                # them clear this one.
+                is_speech = self.detector.is_speech(
+                    block, already_speaking=speech_started
+                )
             else:
-                threshold = max(noise_rms * 3.0, 300.0)
-            is_speech = rms >= threshold
+                # Hysteresis: it takes a clear signal to *start* an utterance,
+                # but much less to stay in one. Without this, the dips between
+                # words — and the breath people take mid-sentence — read as
+                # silence, and the recording ends while they are still talking.
+                if speech_started:
+                    threshold = max(noise_rms * 1.8, 180.0)
+                else:
+                    threshold = max(noise_rms * 3.0, 300.0)
+                is_speech = rms >= threshold
             blocks.append(block)
 
             if is_speech:
