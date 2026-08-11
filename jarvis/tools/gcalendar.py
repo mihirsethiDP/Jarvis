@@ -15,6 +15,19 @@ _MAX_EVENTS = 25
 
 
 def build_tools(ctx: ToolContext) -> list:
+    def _describe_event(calendar_id: str, event_id: str) -> str:
+        """Title and start time, so the user knows which meeting is going."""
+        try:
+            ev = _calendar().events().get(
+                calendarId=calendar_id, eventId=event_id).execute()
+            title = ev.get("summary") or "(untitled event)"
+            start = ev.get("start", {})
+            when = start.get("dateTime") or start.get("date") or ""
+            when = when.replace("T", " ")[:16]
+            return f'"{title}"' + (f" on {when}" if when else "")
+        except Exception:
+            return f"the event with id {event_id}"
+
     def _calendar():
         return ctx.google_service("calendar", "v3")
 
@@ -160,8 +173,11 @@ def build_tools(ctx: ToolContext) -> list:
         """
         if not ctx.permissions.require("calendar_write", "create or change your Calendar events"):
             return "The user declined Calendar write access."
+        # Cancelling a meeting emails every attendee. Confirming against an
+        # opaque event id gave the user no way to tell which meeting.
         result = ctx.confirmer.confirm(
-            "delete_calendar_event", f"I will delete calendar event {event_id} and notify attendees.",
+            "delete_calendar_event",
+            f"I will cancel {_describe_event(calendar_id, event_id)} and notify attendees.",
             audit_detail=event_id,
         )
         if not result:

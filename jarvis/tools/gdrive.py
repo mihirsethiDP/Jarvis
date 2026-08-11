@@ -41,6 +41,12 @@ def build_tools(ctx: ToolContext) -> list:
                 q=f"(name contains '{safe_q}' or fullText contains '{safe_q}') and trashed = false",
                 pageSize=max(1, min(int(max_results), 25)),
                 fields="files(id, name, mimeType, modifiedTime, owners(displayName))",
+                # Team documents live on Shared Drives, and files().list()
+                # excludes those by default — so the files people most often
+                # ask for were reported as not existing.
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+                corpora="allDrives",
             ).execute()
             files = resp.get("files", [])
             ctx.audit.record("tool_call", tool="drive_search", detail=query)

@@ -67,3 +67,41 @@ def test_reserved_device_names_are_rejected(tmp_path, audit):
     for name in ["CON", "nul.txt", "COM1.log"]:
         with pytest.raises(PathNotAllowed):
             resolve_safe(ctx, str(tmp_path / "docs" / name))
+
+
+def test_sandbox_can_import_the_libraries_it_allowlists(tmp_path, audit):
+    # numpy/pandas were on the allowlist and advertised for "data crunching",
+    # but the child ran with -S, which skips site.py and therefore leaves
+    # site-packages off sys.path — so every one of them failed to import.
+    from jarvis.config import load_config
+    from jarvis.memory import MemoryStore
+    from jarvis.security import Confirmer, PermissionManager
+    from jarvis.tools import ToolContext, code_sandbox
+    from conftest import FakeIO
+
+    io = FakeIO(["allow once", "yes"])
+    ctx = ToolContext(config=load_config(), permissions=PermissionManager(io, audit),
+                      confirmer=Confirmer(io, audit), audit=audit, memory=MemoryStore())
+    run = {t.name: t for t in code_sandbox.build_tools(ctx)}["run_code"]
+    out = run("import numpy as np\nprint(int(np.array([1, 2, 3]).sum()))")
+    assert "6" in out, out
+
+
+def test_sandbox_still_refuses_system_access(tmp_path, audit):
+    # Dropping -S must not cost any isolation: the AST allowlist rejects
+    # these before a subprocess is ever started.
+    from jarvis.config import load_config
+    from jarvis.memory import MemoryStore
+    from jarvis.security import Confirmer, PermissionManager
+    from jarvis.tools import ToolContext, code_sandbox
+    from conftest import FakeIO
+
+    for src in ("import os\nos.system('echo hi')",
+                "import socket\nprint(socket)",
+                "import subprocess\nprint(subprocess)",
+                "eval('1+1')"):
+        io = FakeIO(["allow once", "yes"])
+        ctx = ToolContext(config=load_config(), permissions=PermissionManager(io, audit),
+                          confirmer=Confirmer(io, audit), audit=audit, memory=MemoryStore())
+        run = {t.name: t for t in code_sandbox.build_tools(ctx)}["run_code"]
+        assert "won't run that" in run(src), src

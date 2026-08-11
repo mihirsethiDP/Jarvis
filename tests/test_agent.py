@@ -145,3 +145,55 @@ def test_budget_exhausted_blocks_before_any_api_call(tmp_path, agent, monkeypatc
     reply = agent.run_turn("hello")
     assert "limit" in reply.lower()
     assert agent.messages == []  # nothing appended, nothing sent
+
+
+def test_a_refusal_does_not_brick_the_session(monkeypatch):
+    """A refusal used to leave an assistant message containing tool_use in
+    history with no matching tool_result, so the API rejected every later
+    turn until restart. One refusal killed the session."""
+    from types import SimpleNamespace
+
+    import jarvis.brain.agent as agent_mod
+
+    class Block:
+        def __init__(self, type_, name=""):
+            self.type = type_
+            self.name = name
+            self.input = {}
+            self.text = ""
+
+    refusal = SimpleNamespace(
+        stop_reason="refusal",
+        content=[Block("tool_use", "send_email"), Block("text")],
+    )
+
+    class FakeRunner:
+        def __iter__(self):
+            return iter([refusal])
+
+        def generate_tool_call_response(self):
+            raise AssertionError("a refusal must never execute its tools")
+
+    class FakeMessages:
+        def tool_runner(self, **kwargs):
+            return FakeRunner()
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            self.beta = SimpleNamespace(messages=FakeMessages())
+
+    monkeypatch.setattr(agent_mod.anthropic, "Anthropic", FakeClient)
+
+    from jarvis.config import Config
+    from jarvis.security import AuditLog
+
+    a = AuditLog(anchored=False)
+    ag = agent_mod.JarvisAgent(Config(raw={}), [], a)
+    ag.messages = []
+    reply = ag._run_tool_loop()
+
+    assert "can't help" in reply.lower()
+    dangling = [m for m in ag.messages if m.get("role") == "assistant"]
+    assert not dangling, (
+        "an unanswered tool_use was left in history; every later turn would 400"
+    )

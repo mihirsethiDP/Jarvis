@@ -129,10 +129,16 @@ class JarvisAgent:
             last = message
             # Mirror the runner's internal history into ours so multi-turn
             # context (including tool calls) survives across turns.
+            mark = len(self.messages)
             self.messages.append({"role": "assistant", "content": message.content})
             if message.stop_reason == "refusal":
                 # Refusal turns are terminal — executing their tool_use blocks
-                # would fire side effects the model never confirmed.
+                # would fire side effects the model never confirmed. But the
+                # message may *contain* tool_use blocks, and leaving those in
+                # history with no matching tool_result makes the API reject
+                # every later turn: one refusal used to brick the session
+                # until restart. Roll it back instead.
+                del self.messages[mark:]
                 continue
             # Announce BEFORE running the tools, not after. Reporting a tool
             # once its result is already in hand tells the user nothing during

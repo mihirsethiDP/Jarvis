@@ -64,6 +64,23 @@ def _header(headers: list[dict], name: str) -> str:
 
 
 def build_tools(ctx: ToolContext) -> list:
+    def _describe_message(message_id: str) -> str:
+        """Sender and subject for a confirmation the user can actually check."""
+        try:
+            meta = _gmail().users().messages().get(
+                userId="me", id=message_id, format="metadata",
+                metadataHeaders=["From", "Subject"],
+            ).execute()
+            headers = {h["name"].lower(): h["value"]
+                       for h in meta.get("payload", {}).get("headers", [])}
+            sender = headers.get("from", "")
+            subject = headers.get("subject", "(no subject)")
+            sender = sender.split("<")[0].strip().strip('"') or sender
+            return f'"{subject}"' + (f" from {sender}" if sender else "")
+        except Exception:
+            # Never block the action on a failed lookup; fall back to the id.
+            return f"the email with id {message_id}"
+
     label_cache: dict[str, str] = {}  # display name -> label id, filled lazily
 
     def _gmail():
@@ -281,8 +298,12 @@ def build_tools(ctx: ToolContext) -> list:
                 "mark_read, mark_unread, add_label, remove_label."
             )
 
+        # Read back what the email actually IS. "(id 197f3a2b9c8d1e4f)" is
+        # unverifiable by ear, so the user was consenting to trash something
+        # they could not identify — a confirmation nobody can check is not a
+        # confirmation.
         result = ctx.confirmer.confirm(
-            "organize_email", f"I will {summary} (id {message_id}).",
+            "organize_email", f"I will {summary}: {_describe_message(message_id)}.",
             audit_detail=f"{action} label={label} id={message_id}",
         )
         if not result:

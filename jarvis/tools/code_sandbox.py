@@ -215,9 +215,13 @@ def build_tools(ctx: ToolContext) -> list:
         script.write_text(source, encoding="utf-8")
         try:
             completed = subprocess.run(
-                # -I: isolated (ignores env vars and user site-packages)
-                # -S: skip site customisation
-                [sys.executable, "-I", "-S", str(script)],
+                # -I alone: isolated mode already ignores PYTHONPATH, other
+                # environment variables and the user site directory, which is
+                # the isolation that matters here. -S additionally skipped
+                # site.py, which is what puts site-packages on sys.path — so
+                # numpy and pandas were allowlisted and advertised for "data
+                # crunching" while being impossible to import.
+                [sys.executable, "-I", str(script)],
                 cwd=str(workspace),
                 capture_output=True,
                 text=True,

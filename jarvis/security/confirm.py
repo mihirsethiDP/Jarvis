@@ -24,10 +24,23 @@ from .audit import AuditLog
 from .permissions import normalize_answer
 
 _YES = {"yes", "confirm", "confirmed", "do it", "go ahead", "send it", "yep", "yeah", "ok", "okay",
+        # Every one of these was observed to be rejected by the old matcher,
+        # which turned an out-loud "sure, go ahead" into a cancellation and
+        # then asked again. Still deliberately unambiguous affirmatives only —
+        # nothing hedged ("maybe", "I think so") belongs in a consent gate.
+        "sure", "sure thing", "please do", "proceed", "carry on", "go for it",
+        "correct", "absolutely", "alright", "all right", "fine", "yup",
+        "affirmative", "sounds good", "that's right", "thats right", "send",
         # Hindi / Hinglish — kept deliberately narrow: this is the consent gate,
         # so only unambiguous affirmatives belong here.
         "haan", "haanji", "ji haan", "theek hai", "thik hai", "kar do", "bhej do",
-        "हाँ", "हां", "जी हाँ", "ठीक है", "कर दो", "भेज दो"}
+        "bilkul", "han", "haa", "kar dijiye", "bhej dijiye", "theek", "thik",
+        "हाँ", "हां", "जी हाँ", "ठीक है", "कर दो", "भेज दो", "बिल्कुल"}
+
+# Speech starts with noise: "um, yes", "okay so send it", "actually yes".
+# Stripped before matching so the affirmative underneath is still found.
+_LEADING_FILLERS = ("um", "umm", "uh", "er", "hmm", "so", "well", "actually",
+                    "please", "just", "haan to", "to")
 
 # Single deny-words: if any of these appears anywhere in the answer, the
 # action is cancelled regardless of what else was said.
@@ -42,6 +55,14 @@ def _is_yes(normalized: str) -> bool:
     if any(w in _NO_WORDS for w in words):
         return False  # deny wins, always
     if normalized in _YES:
+        return True
+    # Drop leading filler so "um, yes" and "okay so send it" still read as
+    # the affirmative they are.
+    while words and words[0] in _LEADING_FILLERS:
+        words = words[1:]
+    if not words:
+        return False
+    if " ".join(words) in _YES:
         return True
     # Natural speech pads affirmatives: "yes please", "haan kar do".
     return words[0] in _YES or " ".join(words[:2]) in _YES

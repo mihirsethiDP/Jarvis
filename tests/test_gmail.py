@@ -260,3 +260,35 @@ def test_missing_attachment_is_reported(tmp_path, audit):
     out = tools["send_email"]("x@y.com", "S", "b", attach_path=str(docs / "nope.pdf"))
     assert "does not exist" in out
     service.users().messages().send.assert_not_called()
+
+
+def test_trash_confirmation_names_the_email_not_its_id(tmp_path, audit):
+    # "I will move this email to trash (id 197f3a2b9c8d1e4f)" cannot be
+    # checked by ear, so the user was consenting to trash something they
+    # could not identify.
+    service = MagicMock()
+    service.users().messages().get.return_value.execute.return_value = {
+        "payload": {"headers": [
+            {"name": "From", "value": "Ranjana Majumdar <ranjana@digitalpaani.com>"},
+            {"name": "Subject", "value": "Q3 plant report"},
+        ]}
+    }
+    ctx = make_ctx(tmp_path, audit, ["allow once", "yes"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    tools["organize_email"]("197f3a2b9c8d1e4f", "trash")
+
+    asked = " ".join(ctx.confirmer.io.asked)
+    assert "Q3 plant report" in asked
+    assert "Ranjana Majumdar" in asked
+
+
+def test_a_failed_lookup_still_lets_the_action_proceed(tmp_path, audit):
+    # A metadata fetch that fails must degrade to the id, never block the
+    # action the user asked for.
+    service = MagicMock()
+    service.users().messages().get.return_value.execute.side_effect = RuntimeError("boom")
+    ctx = make_ctx(tmp_path, audit, ["allow once", "yes"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["organize_email"]("abc123", "archive")
+    assert "Cancelled" not in out
+    assert "abc123" in " ".join(ctx.confirmer.io.asked)
