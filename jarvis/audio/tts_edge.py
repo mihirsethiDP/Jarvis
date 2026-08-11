@@ -13,6 +13,7 @@ SAPI voice so the assistant never goes mute.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 from .tts import Speaker
@@ -23,6 +24,32 @@ _DEVANAGARI_START, _DEVANAGARI_END = "ऀ", "ॿ"
 # American Windows one instead. Waiting is the lesser annoyance.
 _SYNTH_TIMEOUT = 25.0     # total budget incl. DNS; long replies still fit
 _COOLOFF_SECONDS = 120.0  # after repeated failures, back off — then re-probe
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
+_MIN_CHUNK_CHARS = 25       # below this the split costs more than it saves
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split a reply into speakable chunks.
+
+    Deliberately conservative: a chunk that is too short makes the delivery
+    choppy, and each chunk is a separate cloud round-trip. Short replies —
+    which are most of them — are left whole.
+    """
+    text = text.strip()
+    if len(text) <= 90:
+        return [text]
+    chunks: list[str] = []
+    for part in _SENTENCE_END.split(text):
+        part = part.strip()
+        if not part:
+            continue
+        if chunks and len(chunks[-1]) < _MIN_CHUNK_CHARS:
+            chunks[-1] = f"{chunks[-1]} {part}"
+        else:
+            chunks.append(part)
+    return chunks or [text]
 
 
 def _looks_hindi(text: str) -> bool:
@@ -58,6 +85,21 @@ class EdgeSpeaker:
         self.fallback.say(text)
 
     def say(self, text: str) -> None:
+        if not text.strip():
+            return
+        # Speak sentence by sentence. Synthesising a whole three-sentence
+        # reply before any sound comes out put the entire synthesis cost in
+        # front of the first word; sending the first sentence alone starts
+        # the audio roughly a second sooner, and the rest is synthesised
+        # while the user is already listening.
+        chunks = _split_sentences(text)
+        if len(chunks) > 1:
+            for chunk in chunks:
+                self._say_one(chunk)
+            return
+        self._say_one(text)
+
+    def _say_one(self, text: str) -> None:
         if not text.strip():
             return
         # Circuit breaker: on a blocked/plant network, don't stall every

@@ -77,6 +77,14 @@ def build_tools(ctx: ToolContext) -> list:
         ctx.audit.record("tool_call", tool="remember",
                          detail=f"{stored.id} ({category}) sha256={_digest(stored.text)}",
                          decision="confirmed")
+        evicted = ctx.memory.take_eviction_notice()
+        if evicted:
+            # Making room silently meant Jarvis dropped something the user had
+            # deliberately asked it to keep, and never mentioned it.
+            return (f"Remembered as {stored.id}. Memory was full, so I had to "
+                    f"forget {len(evicted)} older fact(s) to make room: "
+                    + "; ".join(f'"{t}"' for t in evicted)
+                    + ". Tell the user, so they can re-add anything that still matters.")
         return f"Remembered as {stored.id}."
 
     @beta_tool

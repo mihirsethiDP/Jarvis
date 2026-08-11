@@ -198,6 +198,10 @@ class MemoryStore:
             if len(self._facts) > MAX_FACTS:
                 dropped = self._facts[:-MAX_FACTS]
                 self._facts = self._facts[-MAX_FACTS:]
+                # Also handed back on the fact, because stderr does not exist
+                # for a voice user: Jarvis silently forgot something the user
+                # had asked it to keep, and nobody was told.
+                self.last_evicted = [d.text for d in dropped]
                 print(
                     f"Note: memory is full ({MAX_FACTS} facts) — forgot the "
                     f"{len(dropped)} oldest to make room "
@@ -206,6 +210,12 @@ class MemoryStore:
                 )
             self._save()
         return fact
+
+    def take_eviction_notice(self) -> list[str]:
+        """Facts dropped by the last add(), consumed once."""
+        notice = getattr(self, "last_evicted", [])
+        self.last_evicted = []
+        return notice
 
     def forget(self, fact_id: str) -> Fact | None:
         with self._lock:

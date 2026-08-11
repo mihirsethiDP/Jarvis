@@ -109,3 +109,25 @@ def test_two_unclear_answers_still_fail_closed(audit):
 
     io = FakeIO(["mmhm", "shhh"])
     assert not Confirmer(io, audit).confirm("send_email", "I will send this.")
+
+
+def test_a_garbled_permission_answer_is_asked_again(audit, tmp_path):
+    # memory_recall is asked once per session, so one mis-transcribed answer
+    # silently switched memory off for the whole session.
+    from conftest import FakeIO
+    from jarvis.security.permissions import PermissionManager
+
+    io = FakeIO(["mmhm grrk", "allow once"])
+    pm = PermissionManager(io, audit, store_path=tmp_path / "p.json")
+    assert pm.require("memory_recall", "use what it remembered") is True
+    assert len(io.asked) == 2
+
+
+def test_an_explicit_permission_denial_is_not_re_asked(audit, tmp_path):
+    from conftest import FakeIO
+    from jarvis.security.permissions import PermissionManager
+
+    io = FakeIO(["no"])
+    pm = PermissionManager(io, audit, store_path=tmp_path / "p.json")
+    assert pm.require("memory_recall", "use what it remembered") is False
+    assert len(io.asked) == 1

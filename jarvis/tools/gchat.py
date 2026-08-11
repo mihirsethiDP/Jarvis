@@ -66,6 +66,32 @@ def build_tools(ctx: ToolContext) -> list:
         me_cache["id"] = "users/" + who["resourceName"].split("/")[-1]
         return me_cache["id"]
 
+    def _resolve_people(user_resources: list[str]) -> None:
+        """Resolve many ids in one request.
+
+        Labelling a list of conversations one name at a time meant dozens of
+        sequential HTTPS calls for a single "list my chats". getBatchGet takes
+        up to 200 at once.
+        """
+        wanted = [r for r in dict.fromkeys(user_resources)
+                  if r and r not in people_names]
+        if not wanted or ctx.permissions.denied("directory_read"):
+            return
+        for i in range(0, len(wanted), 180):
+            chunk = wanted[i:i + 180]
+            try:
+                resp = _people().people().getBatchGet(
+                    resourceNames=[f"people/{r.split('/')[-1]}" for r in chunk],
+                    personFields="names",
+                ).execute()
+            except Exception:
+                return  # fall back to per-name lookups, or to raw ids
+            for res, original in zip(resp.get("responses", []), chunk):
+                person = res.get("person") or {}
+                name = (person.get("names") or [{}])[0].get("displayName")
+                if name:
+                    people_names[original] = name
+
     def _person_name(user_resource: str) -> str:
         """Resolve "users/123" to a display name via the directory, cached."""
         if not user_resource:
@@ -283,18 +309,23 @@ def build_tools(ctx: ToolContext) -> list:
         named = [s for s in spaces if s.get("displayName")]
         unnamed = [s for s in spaces if not s.get("displayName")]
 
+        hidden = 0
         if name_filter:
             needle = name_filter.lower()
             hits = [s for s in named if needle in (s.get("displayName") or "").lower()]
-            # Fall back to naming the unnamed ones only when a plain match
-            # failed, so the common case stays a single API call.
+            # Naming an unnamed space costs an API call each, so this only
+            # happens when a plain title match found nothing.
             if not hits:
-                for space in unnamed[:_MAX_LABELLED]:
+                probed = unnamed[:_MAX_LABELLED]
+                hidden = len(unnamed) - len(probed)
+                for space in probed:
                     if needle in _space_label(space).lower():
                         hits.append(space)
             shown = hits
         else:
-            shown = named + unnamed[:_MAX_LABELLED]
+            probed = unnamed[:_MAX_LABELLED]
+            hidden = len(unnamed) - len(probed)
+            shown = named + probed
 
         ctx.audit.record("tool_call", tool="list_chat_spaces",
                          detail=f"{name_filter or '(all)'} -> {len(shown)}/{len(spaces)}")
@@ -307,8 +338,13 @@ def build_tools(ctx: ToolContext) -> list:
 
         lines = [f"- {_space_label(s)}  (id: {s['name']})" for s in shown[:_MAX_SHOWN]]
         body = "\n".join(lines)
-        if len(shown) > _MAX_SHOWN:
-            body += f"\n[{len(shown) - _MAX_SHOWN} more not shown — narrow the filter.]"
+        # Both numbers were previously wrong: the overflow count ignored the
+        # unnamed spaces that were never even examined, so the model was told
+        # it had seen everything when it had not.
+        overflow = max(0, len(shown) - _MAX_SHOWN) + hidden
+        if overflow:
+            body += (f"\n[{overflow} further conversation(s) not shown. For a person, "
+                     "use find_direct_message; otherwise narrow the filter.]")
         return as_document("chat-spaces", body)
 
     @beta_tool
@@ -339,6 +375,9 @@ def build_tools(ctx: ToolContext) -> list:
             ctx.audit.record("tool_call", tool="read_chat_messages", detail=space_id)
             if not messages:
                 return f"No messages found in {space_id}."
+            # One batched directory lookup for the whole transcript rather
+            # than one per distinct speaker.
+            _resolve_people([(m.get("sender") or {}).get("name") or "" for m in messages])
             lines = [
                 f"[{m.get('createTime', '?')}] "
                 f"{_sender_label(m.get('sender', {}))}: {_message_body(m)}"

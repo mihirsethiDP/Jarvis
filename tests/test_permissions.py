@@ -23,11 +23,14 @@ def test_gibberish_fails_closed(tmp_path, audit):
 
 
 def test_allow_once_does_not_persist(tmp_path, audit):
-    pm, io = make_pm(tmp_path, audit, ["allow once", ""])
+    pm, io = make_pm(tmp_path, audit, ["allow once", "", ""])
     assert pm.require("files_read", "read files") is True
-    # Second call must ask again (and the empty answer denies).
+    # Second call must ask again, and silence still denies — but silence now
+    # gets one repeat first, because a mis-transcribed answer was previously
+    # indistinguishable from a refusal.
     assert pm.require("files_read", "read files") is False
-    assert len(io.asked) == 2
+    assert len(io.asked) == 3
+    assert "didn't catch that" in io.asked[-1]
 
 
 def test_session_grant_skips_prompt(tmp_path, audit):

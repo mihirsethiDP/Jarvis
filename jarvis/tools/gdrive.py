@@ -90,6 +90,30 @@ def _extract_text(raw: bytes, mime: str, name: str) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+# Words that carry no search signal but do exclude results when ANDed in.
+_STOPWORDS = {
+    "the", "a", "an", "of", "for", "to", "in", "on", "at", "and", "or", "my",
+    "our", "me", "please", "find", "file", "files", "document", "documents",
+    "doc", "about", "with", "from", "that", "this", "show", "get", "latest",
+    "ka", "ki", "ke", "wala", "wali", "mera", "meri",
+}
+_MAX_TERMS = 5
+
+
+def _search_terms(query: str) -> list[str]:
+    """Meaningful words from a spoken query, longest first."""
+    words = [w.strip(".,!?'\"()").lower() for w in query.split()]
+    terms = [w for w in words if len(w) > 2 and w not in _STOPWORDS]
+    # Longest terms are the most selective; capping keeps the query sane.
+    terms.sort(key=len, reverse=True)
+    seen, out = set(), []
+    for t in terms:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out[:_MAX_TERMS]
+
+
 def build_tools(ctx: ToolContext) -> list:
     @beta_tool
     def drive_search(query: str, max_results: int = 10) -> str:
@@ -102,9 +126,17 @@ def build_tools(ctx: ToolContext) -> list:
         if not ctx.permissions.require("drive_read", "search and read your Google Drive"):
             return "The user declined Google Drive access."
         try:
-            safe_q = query.replace("\\", "\\\\").replace("'", "\\'")
+            # Drive's `contains` matches whole words and prefixes, not
+            # substrings, so handing it a spoken phrase ("the Nashik
+            # commissioning report") matched nothing at all. AND the terms
+            # instead, so word order and filler words stop mattering.
+            terms = [t for t in _search_terms(query)] or [query]
+            clauses = []
+            for term in terms:
+                safe = term.replace("\\", "\\\\").replace("'", "\\'")
+                clauses.append(f"(name contains '{safe}' or fullText contains '{safe}')")
             resp = _drive(ctx).files().list(
-                q=f"(name contains '{safe_q}' or fullText contains '{safe_q}') and trashed = false",
+                q=" and ".join(clauses) + " and trashed = false",
                 pageSize=max(1, min(int(max_results), 25)),
                 fields="files(id, name, mimeType, modifiedTime, owners(displayName))",
                 # Team documents live on Shared Drives, and files().list()

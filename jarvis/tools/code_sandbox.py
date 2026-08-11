@@ -19,8 +19,9 @@ narrow, inspected channel rather than a shell. Layers, outermost first:
 4. **No network.** Every networking module is off the allowlist, so the
    sandbox cannot exfiltrate anything or pull code down.
 5. **Confined, disposable workspace.** Execution happens in a dedicated
-   scratch directory with the interpreter in isolated mode (`-I -S`), a hard
-   timeout, and an output cap.
+   scratch directory with the interpreter in isolated mode (`-I`), a hard
+   timeout, and an output cap. (`-I` alone: `-S` additionally skipped
+   site.py, which left the allowlisted numpy/pandas unimportable.)
 6. **The human reads the code first.** Execution is a confirmed side effect:
    the exact source is shown/read back and requires an explicit yes.
 7. **Audited.** Every attempt — validated, refused, run, failed — is logged.
@@ -112,6 +113,48 @@ def _protected_fragments() -> list[str]:
     ]
 
 
+def _looks_like_escaping_path(value: str) -> bool:
+    """True for a string that is clearly a path leaving the workspace.
+
+    Deliberately narrow, and applied to the raw string rather than a
+    separator-normalised one: a regex literal like r"\\d+" starts with a
+    backslash without being a path at all, and flagging it would refuse
+    perfectly ordinary data work.
+    """
+    if value.startswith("\\\\") or value.startswith("//"):
+        return True                                    # UNC share
+    if len(value) > 2 and value[1] == ":" and value[2] in "\\/":
+        return True                                    # C:\... or C:/...
+    parts = value.replace("\\", "/").split("/")
+    return ".." in parts and len(parts) > 1            # climbs out
+
+
+def _reject_path(value: str, protected: list[str], workspace: str) -> None:
+    """Raise if this path literal is out of bounds."""
+    lowered = value.lower().replace("/", "\\")
+    if lowered.startswith(workspace):
+        return                                   # inside the scratch directory
+    for fragment in protected:
+        if fragment in lowered:
+            raise CodeRejected(
+                "it references a protected location "
+                f"('{value[:60]}'). Code may only touch its own workspace folder."
+            )
+    if _looks_like_escaping_path(value):
+        raise CodeRejected(
+            f"it references '{value[:60]}', which is outside its workspace "
+            "folder. Use a plain relative filename."
+        )
+
+
+def _is_open_call(node: ast.Call) -> bool:
+    """open(...) or io.open(...) — the only ways in, given the allowlist."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "open"
+    return isinstance(func, ast.Attribute) and func.attr == "open"
+
+
 def validate(source: str) -> None:
     """Raise CodeRejected unless the code is inside the permitted subset."""
     if len(source) > _MAX_SOURCE_CHARS:
@@ -142,18 +185,29 @@ def validate(source: str) -> None:
         elif isinstance(node, ast.Attribute) and node.attr in _BANNED_ATTRS:
             raise CodeRejected(f"it reaches into '{node.attr}', which can bypass these checks")
 
+        # -- file opens must stay inside the workspace --------------------
+        # The confirmation tells the user this code "cannot reach any file
+        # outside its own workspace folder". Only *protected* paths were
+        # actually blocked, so an ordinary document elsewhere on the disk was
+        # still reachable and the promise was wider than the enforcement.
+        # The child runs with cwd=workspace, so relative paths are already
+        # confined; what has to be rejected is anything absolute or climbing.
+        elif isinstance(node, ast.Call) and _is_open_call(node):
+            target = node.args[0] if node.args else None
+            if isinstance(target, ast.Constant) and isinstance(target.value, str):
+                _reject_path(target.value, protected, workspace)
+            elif target is not None:
+                raise CodeRejected(
+                    "it opens a file whose path is computed at runtime, which "
+                    "can't be checked in advance. Use a plain relative filename."
+                )
+
         # -- literal paths pointing at Jarvis or the wider system ---------
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            lowered = node.value.lower().replace("/", "\\")
-            if lowered.startswith(workspace):
-                continue  # explicitly inside the scratch directory: fine
-            for fragment in protected:
-                if fragment in lowered:
-                    raise CodeRejected(
-                        "it references a protected location "
-                        f"('{node.value[:60]}'). Code may only touch its own "
-                        "workspace folder."
-                    )
+            # Not every file read goes through open(): pandas.read_csv and
+            # openpyxl.load_workbook take a path directly, so every string
+            # literal is checked, not just open()'s argument.
+            _reject_path(node.value, protected, workspace)
 
 
 def _imports_summary(source: str) -> str:

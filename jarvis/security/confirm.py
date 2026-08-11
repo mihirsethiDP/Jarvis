@@ -123,10 +123,14 @@ class ConfirmResult:
 
 class Confirmer:
     def __init__(self, io: IOChannel, audit: AuditLog, *, enabled: bool = True,
-                 limiter=None):
+                 limiter=None, on_status=None):
         self.io = io
         self.audit = audit
         self.enabled = enabled
+        # The orb showed whatever state the turn was last in while Jarvis sat
+        # waiting for a spoken yes, so there was no visible sign that it was
+        # holding for an answer.
+        self.on_status = on_status or (lambda *_a: None)
         # Every side effect funnels through confirm(), so the blast-radius
         # cap lives here and covers all of them at once.
         self.limiter = limiter
@@ -160,6 +164,7 @@ class Confirmer:
             return ConfirmResult(True)
 
         try:
+            self.on_status("listening", f"waiting for your yes or no — {summary}")
             raw = self.io.ask(
                 f"Please confirm — {summary} Say yes to proceed, or no to cancel."
             )

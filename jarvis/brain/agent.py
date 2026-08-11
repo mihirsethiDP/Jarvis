@@ -91,21 +91,33 @@ class JarvisAgent:
         # Per turn, not per session: the user needs telling every time work
         # starts, not only the first time this tool was ever used.
         self._narrated.clear()
-        self.on_status("thinking")
+        # Carries the transcript. Publishing a bare "thinking" here blanked the
+        # detail the app had just published, so the user never got to see what
+        # Jarvis had heard — which is exactly what you want to check when it
+        # mis-hears you.
+        self.on_status("thinking", user_text)
 
         try:
             reply = self._run_tool_loop()
         except anthropic.AuthenticationError:
             del self.messages[checkpoint:]
+            # Every failure below is audited, so the live activity feed shows
+            # why a turn died instead of the orb simply going quiet.
+            self.audit.record("error", tool="brain", detail="invalid API key",
+                              decision="auth", ok=False)
             return (
                 "My Claude API key is missing or invalid. "
                 "Please set ANTHROPIC_API_KEY and restart me."
             )
         except anthropic.RateLimitError:
             del self.messages[checkpoint:]
+            self.audit.record("error", tool="brain", detail="rate limited by the API",
+                              decision="rate_limit", ok=False)
             return "I'm being rate limited right now — give me a moment and try again."
         except anthropic.APIConnectionError:
             del self.messages[checkpoint:]
+            self.audit.record("error", tool="brain", detail="cannot reach the Claude API",
+                              decision="offline", ok=False)
             return "I can't reach the Claude API — please check the network connection."
         except anthropic.APIStatusError as e:
             del self.messages[checkpoint:]
@@ -172,17 +184,40 @@ class JarvisAgent:
     # ------------------------------------------------------------------
     def _trim_history(self) -> None:
         """Bound the conversation window, cutting only at plain user turns so
-        tool_use/tool_result pairs are never orphaned."""
-        max_turns = self.config.max_history_turns
+        tool_use/tool_result pairs are never orphaned.
+
+        Bounded by size as well as by turn count: a handful of turns that each
+        pulled in a long document or a wall of chat history costs far more
+        than many short ones, and counting turns alone let a session get
+        steadily slower and more expensive with no ceiling.
+        """
         user_turn_indexes = [
             i
             for i, m in enumerate(self.messages)
             if m.get("role") == "user" and isinstance(m.get("content"), str)
         ]
-        if len(user_turn_indexes) <= max_turns:
+        if not user_turn_indexes:
             return
-        cut_at = user_turn_indexes[len(user_turn_indexes) - max_turns]
-        self.messages = self.messages[cut_at:]
+
+        max_turns = self.config.max_history_turns
+        cut_at = 0
+        if len(user_turn_indexes) > max_turns:
+            cut_at = user_turn_indexes[len(user_turn_indexes) - max_turns]
+
+        # Then tighten further if what remains is still too large. Cutting only
+        # at plain user turns keeps tool_use/tool_result pairs together.
+        budget = int(self.config.get("brain.max_history_chars", 120_000))
+        for start in user_turn_indexes:
+            if start < cut_at:
+                continue
+            if sum(len(str(m.get("content", ""))) for m in self.messages[start:]) <= budget:
+                cut_at = start
+                break
+        else:
+            cut_at = user_turn_indexes[-1]   # keep at least the newest turn
+
+        if cut_at:
+            self.messages = self.messages[cut_at:]
 
     def reset(self) -> None:
         self.messages.clear()

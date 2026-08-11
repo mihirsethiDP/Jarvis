@@ -144,3 +144,41 @@ def test_runtime_error_is_reported_not_raised(tmp_path, audit):
         "print(1/0)"
     )
     assert "ZeroDivisionError" in out
+
+
+# -- the confirmation's file-access promise must actually hold -----------
+# run_code tells the user the program "cannot reach any file outside its own
+# workspace folder". Only *protected* paths were enforced, so an ordinary
+# document elsewhere on the disk was still reachable and the promise was
+# wider than the enforcement.
+
+@pytest.mark.parametrize("src", [
+    "open('C:/Users/Mihir/Documents/private.txt').read()",
+    "open('../../secrets.txt').read()",
+    "import io\nio.open('C:/Windows/win.ini').read()",
+    "import pandas as pd\npd.read_csv('C:/Users/Mihir/Documents/pay.csv')",
+    "import openpyxl\nopenpyxl.load_workbook('../../x.xlsx')",
+])
+def test_paths_outside_the_workspace_are_refused(src):
+    with pytest.raises(CodeRejected):
+        validate(src)
+
+
+def test_a_runtime_computed_path_is_refused():
+    # It cannot be checked in advance, so it cannot be promised.
+    with pytest.raises(CodeRejected):
+        validate("name = 'a' + '.txt'\nopen(name).read()")
+
+
+@pytest.mark.parametrize("src", [
+    "f = open('report.csv', 'w')\nf.write('x')",
+    "import pandas as pd\npd.DataFrame({'a': [1]}).to_csv('out.csv')",
+    "import pandas as pd\npd.read_csv('sub/data.csv')",
+    r"import re" "\n" r"print(re.findall(r'\d+', 'a1b22'))",
+    "print('the ratio is 3:1 overall')",
+    "print('meeting at 11:30')",
+])
+def test_ordinary_relative_work_is_still_allowed(src):
+    # A regex literal starts with a backslash without being a path; refusing
+    # it would block perfectly normal data work.
+    validate(src)

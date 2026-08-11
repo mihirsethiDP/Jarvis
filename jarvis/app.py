@@ -77,13 +77,15 @@ class JarvisApp:
 
         io = self._build_io()
         self.permissions = PermissionManager(
-            io, self.audit, session_grant_minutes=config.session_grant_minutes
+            io, self.audit, session_grant_minutes=config.session_grant_minutes,
+            on_status=self._publish,
         )
         # Side-effect confirmation is always on — deliberately not configurable,
         # so no config edit (or prompt-injected "helpful suggestion") can
         # disable the human-in-the-loop gate.
         # Blast-radius caps: even a confirmed action can't run away.
-        self.confirmer = Confirmer(io, self.audit, limiter=ActionLimiter())
+        self.confirmer = Confirmer(io, self.audit, limiter=ActionLimiter(),
+                                   on_status=self._publish)
         self.memory = MemoryStore()
         limit = int(config.get("brain.daily_turn_limit", 200))
         self.turn_budget = TurnBudget(limit) if limit > 0 else None

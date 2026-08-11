@@ -97,6 +97,15 @@ def classify_answer(answer: str) -> str:
     return "deny"              # unrecognized fails closed, as before
 
 
+def _is_unclear_grant(answer: str) -> bool:
+    """True when the answer was neither a recognisable grant nor a refusal."""
+    if not answer:
+        return True
+    if any(_has(answer, p) for p in _DENY):
+        return False                      # an explicit no is not second-guessed
+    return classify_answer(answer) == "deny"
+
+
 class PermissionManager:
     def __init__(
         self,
@@ -105,9 +114,11 @@ class PermissionManager:
         *,
         store_path: Path | None = None,
         session_grant_minutes: int = 480,
+        on_status=None,
     ):
         self.io = io
         self.audit = audit
+        self.on_status = on_status or (lambda *_a: None)
         self.store_path = store_path or permissions_file()
         self.session_ttl = session_grant_minutes * 60
         self._session: dict[str, float] = {}  # capability -> expiry epoch
@@ -187,10 +198,20 @@ class PermissionManager:
             return True
 
         try:
+            self.on_status("listening", f"waiting for permission — {description}")
             answer = normalize_answer(self.io.ask(
                 f"I need permission to {description}. "
                 'Say "allow once", "allow for this session", "always allow", or "deny".'
             ))
+            # One mis-transcribed answer used to be indistinguishable from a
+            # refusal, and for a once-per-session question like memory recall
+            # that silently switched the feature off for the whole session.
+            # An unintelligible answer gets a second try; a clear "deny" does
+            # not, and two unclear answers still fail closed.
+            if _is_unclear_grant(answer):
+                answer = normalize_answer(self.io.ask(
+                    "Sorry, I didn't catch that. Say allow or deny."
+                ))
         except EOFError:
             answer = ""  # input channel closed — fail closed like silence
 

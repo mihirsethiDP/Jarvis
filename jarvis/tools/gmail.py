@@ -76,6 +76,28 @@ def _extract_text(payload: dict) -> str:
     return ""
 
 
+def _attachments(payload: dict) -> list[str]:
+    """Names and sizes of any attached files.
+
+    read_email never mentioned attachments at all, so an email whose whole
+    point was the file it carried came back looking like a bare note — and
+    Jarvis would report there was nothing attached.
+    """
+    found: list[str] = []
+
+    def walk(part: dict) -> None:
+        filename = part.get("filename") or ""
+        body = part.get("body") or {}
+        if filename and body.get("attachmentId"):
+            size = body.get("size") or 0
+            found.append(f"{filename} ({max(1, size // 1024)} KB)")
+        for child in part.get("parts") or []:
+            walk(child)
+
+    walk(payload)
+    return found
+
+
 def _header(headers: list[dict], name: str) -> str:
     for h in headers:
         if h.get("name", "").lower() == name.lower():
@@ -218,11 +240,20 @@ def build_tools(ctx: ToolContext) -> list:
                     "\n[Truncated — the message is longer than the read limit, "
                     "so do not treat this as the whole email.]"
                 )
+            attached = _attachments(msg.get("payload", {}))
+            attach_line = ""
+            if attached:
+                attach_line = (
+                    "Attachments: " + ", ".join(attached)
+                    + "\n[Jarvis can see that these exist but cannot open them from "
+                      "here — say so rather than guessing at their contents.]\n"
+                )
             text = (
                 f"From: {_header(headers, 'From')}\n"
                 f"To: {_header(headers, 'To')}\n"
                 f"Subject: {_header(headers, 'Subject')}\n"
-                f"Date: {_header(headers, 'Date')}\n\n{body}"
+                f"Date: {_header(headers, 'Date')}\n"
+                f"{attach_line}\n{body}"
             )
             ctx.audit.record("tool_call", tool="read_email", detail=message_id)
             return as_document(f"gmail:{message_id}", text)

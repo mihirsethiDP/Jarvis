@@ -92,6 +92,12 @@ files:
   allowed_dirs:
     - "~/Documents"
     - "~/Downloads"
+    # send_email's own description offers to attach "a file on your Desktop",
+    # so leaving Desktop out made Jarvis promise something it would then
+    # refuse. OneDrive's redirected Desktop is the same folder on machines
+    # with Known Folder Move turned on.
+    - "~/Desktop"
+    - "~/OneDrive/Desktop"
 
 # External AI tools Jarvis may forward prompts to — only if listed here AND
 # the user grants permission at runtime. Example:
