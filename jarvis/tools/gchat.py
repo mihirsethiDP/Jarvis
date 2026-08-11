@@ -53,14 +53,17 @@ def build_tools(ctx: ToolContext) -> list:
     def _me() -> str:
         """The signed-in user's own Chat id, so a DM can be labelled by the
         *other* participant rather than by whoever spoke last."""
-        if "id" not in me_cache:
-            me_cache["id"] = ""
-            try:
-                who = _people().people().get(
-                    resourceName="people/me", personFields="names").execute()
-                me_cache["id"] = "users/" + who["resourceName"].split("/")[-1]
-            except Exception:
-                pass
+        if "id" in me_cache:
+            return me_cache["id"]
+        try:
+            who = _people().people().get(
+                resourceName="people/me", personFields="names").execute()
+        except Exception:
+            # Deliberately NOT cached: seeding "" here made _dm_partner match
+            # the user's own messages, so a DM got labelled with the sender's
+            # own name and the send confirmation named the wrong person.
+            return ""
+        me_cache["id"] = "users/" + who["resourceName"].split("/")[-1]
         return me_cache["id"]
 
     def _person_name(user_resource: str) -> str:
@@ -69,18 +72,38 @@ def build_tools(ctx: ToolContext) -> list:
             return "unknown"
         if user_resource in people_names:
             return people_names[user_resource]
-        label = user_resource
-        if not ctx.permissions.denied("directory_read"):
-            try:
-                person = _people().people().get(
-                    resourceName=f"people/{user_resource.split('/')[-1]}",
-                    personFields="names",
-                ).execute()
-                label = (person.get("names") or [{}])[0].get("displayName") or user_resource
-            except Exception:
-                pass  # directory unavailable — the id is still informative
+        if ctx.permissions.denied("directory_read"):
+            return user_resource
+        try:
+            person = _people().people().get(
+                resourceName=f"people/{user_resource.split('/')[-1]}",
+                personFields="names",
+            ).execute()
+        except Exception:
+            # Not cached: memoising a failure meant one transient directory
+            # error left every name in the session showing as a raw id.
+            return user_resource
+        label = (person.get("names") or [{}])[0].get("displayName") or user_resource
         people_names[user_resource] = label
         return label
+
+    def _message_body(m: dict) -> str:
+        """What was actually said — or shared.
+
+        Chat messages are not all text. A file, image or card has an empty
+        `text`, which rendered as a blank line and made Jarvis report that a
+        colleague had said nothing at all."""
+        text = (m.get("text") or m.get("formattedText") or "").strip()
+        if text:
+            return text
+        for att in m.get("attachment", []) or []:
+            name = att.get("contentName") or att.get("contentType") or "a file"
+            return f"(shared {name})"
+        if m.get("cardsV2") or m.get("cards"):
+            return "(sent a card)"
+        if m.get("deletionMetadata"):
+            return "(message deleted)"
+        return "(no text — an attachment or app message)"
 
     def _sender_label(sender: dict) -> str:
         return sender.get("displayName") or _person_name(sender.get("name") or "")
@@ -105,7 +128,11 @@ def build_tools(ctx: ToolContext) -> list:
         most of a real account's spaces."""
         spaces, token, pages = [], None, 0
         while pages < _MAX_PAGES:
-            resp = _chat().spaces().list(pageSize=_PAGE_SIZE, pageToken=token).execute()
+            resp = _chat().spaces().list(
+                pageSize=_PAGE_SIZE, pageToken=token,
+                # Needed to say how many people a group chat reaches.
+                fields="spaces(name,displayName,spaceType,membershipCount),nextPageToken",
+            ).execute()
             spaces.extend(resp.get("spaces", []))
             token = resp.get("nextPageToken")
             pages += 1
@@ -122,6 +149,8 @@ def build_tools(ctx: ToolContext) -> list:
         except Exception:
             return ""
         mine = _me()
+        if not mine:
+            return ""   # cannot tell my own messages from theirs; do not guess
         for m in resp.get("messages", []):
             sender = (m.get("sender") or {}).get("name") or ""
             if sender and sender != mine:
@@ -143,8 +172,12 @@ def build_tools(ctx: ToolContext) -> list:
             partner = _dm_partner(space_id)
             label = f"{partner} (direct message)" if partner else "a direct message"
         elif kind == "GROUP_CHAT":
-            partner = _dm_partner(space_id)
-            label = f"group chat with {partner}" if partner else "an unnamed group chat"
+            # Never name a single person here. "group chat with Ranjana" reads
+            # as a private message, so the user would confirm a broadcast to
+            # several colleagues believing it goes to one.
+            count = space.get("membershipCount", {}).get("joinedDirectHumanUserCount")
+            label = (f"an unnamed group chat with {count} people" if count
+                     else "an unnamed group chat (several people)")
         else:
             label = "an unnamed space"
         space_labels[space_id] = label
@@ -176,6 +209,16 @@ def build_tools(ctx: ToolContext) -> list:
                     "the user declined.")
         try:
             matches = _search_directory(person_name)
+            if not matches:
+                # Directory search is prefix-based, so one mis-heard syllable
+                # ("Ranjna", "Ranjan a") returns nothing at all. Retry shorter
+                # before telling the user the person does not exist.
+                first = person_name.split()[0] if person_name.split() else ""
+                for attempt in (first, first[:4]):
+                    if len(attempt) >= 3:
+                        matches = _search_directory(attempt)
+                        if matches:
+                            break
         except Exception as e:
             ctx.audit.record("tool_call", tool="find_direct_message",
                              detail=person_name, ok=False)
@@ -298,7 +341,7 @@ def build_tools(ctx: ToolContext) -> list:
                 return f"No messages found in {space_id}."
             lines = [
                 f"[{m.get('createTime', '?')}] "
-                f"{_sender_label(m.get('sender', {}))}: {m.get('text', '')}"
+                f"{_sender_label(m.get('sender', {}))}: {_message_body(m)}"
                 for m in messages
             ]
             return as_document(f"chat:{space_id}", "\n".join(lines))

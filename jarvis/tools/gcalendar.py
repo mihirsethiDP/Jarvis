@@ -7,11 +7,21 @@ checking a colleague's availability cannot leak what a meeting is about.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from anthropic import beta_tool
 
 from . import ToolContext, as_document, cancelled_by_user
 
 _MAX_EVENTS = 25
+
+
+def _inclusive_end(exclusive_date: str) -> str:
+    """Google ends all-day events on the day AFTER they finish."""
+    try:
+        return (date.fromisoformat(exclusive_date) - timedelta(days=1)).isoformat()
+    except ValueError:
+        return exclusive_date
 
 
 def build_tools(ctx: ToolContext) -> list:
@@ -55,12 +65,29 @@ def build_tools(ctx: ToolContext) -> list:
                 return f"No events on {calendar_id} between {time_min} and {time_max}."
             lines = []
             for e in events:
-                start = e.get("start", {}).get("dateTime") or e.get("start", {}).get("date", "?")
-                end = e.get("end", {}).get("dateTime") or e.get("end", {}).get("date", "?")
+                start_o, end_o = e.get("start", {}), e.get("end", {})
+                if start_o.get("date"):
+                    # All-day events use an EXCLUSIVE end date, so a one-day
+                    # event reads as spanning two days unless it is adjusted.
+                    start = start_o["date"]
+                    end = _inclusive_end(end_o.get("date", start))
+                    when = f"all day on {start}" if end == start else f"all day {start} to {end}"
+                else:
+                    when = f"{start_o.get('dateTime', '?')} to {end_o.get('dateTime', '?')}"
                 attendees = ", ".join(a.get("email", "") for a in e.get("attendees", []))
+                # A meeting the user already declined is not a meeting they
+                # have. Reporting it as one made the day look busier than it is.
+                mine = next((a for a in e.get("attendees", []) if a.get("self")), {})
+                status = mine.get("responseStatus", "")
+                note = {"declined": "  [you declined this]",
+                        "tentative": "  [you marked this tentative]",
+                        "needsAction": "  [you have not responded]"}.get(status, "")
+                if e.get("status") == "cancelled":
+                    note = "  [cancelled]"
                 lines.append(
-                    f"- {e.get('summary', '(no title)')}: {start} to {end}"
+                    f"- {e.get('summary', '(no title)')}: {when}"
                     f"  (id: {e['id']})" + (f"  attendees: {attendees}" if attendees else "")
+                    + note
                 )
             return as_document(f"calendar:{calendar_id}", "\n".join(lines))
         except Exception as e:

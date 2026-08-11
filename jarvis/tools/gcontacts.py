@@ -42,17 +42,38 @@ def build_tools(ctx: ToolContext) -> list:
         if not ctx.permissions.require("directory_read", "look up colleagues in your company directory"):
             return "The user declined company directory access."
         try:
+            # DOMAIN_CONTACT covers the shared contacts an admin publishes —
+            # clients, vendors, site engineers. Without it those people are
+            # invisible and Jarvis says they are not in the directory.
             resp = _people().people().searchDirectoryPeople(
                 query=name, readMask=_READ_MASK,
-                sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
+                sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+                         "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"],
+                pageSize=30,
             ).execute()
             people = resp.get("people", [])
+            # Prefix matching misses a mis-heard name entirely; retry shorter
+            # before telling the user the person does not exist.
+            if not people and name.split():
+                first = name.split()[0]
+                for attempt in (first, first[:4]):
+                    if len(attempt) >= 3:
+                        retry = _people().people().searchDirectoryPeople(
+                            query=attempt, readMask=_READ_MASK,
+                            sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+                                     "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"],
+                            pageSize=30,
+                        ).execute()
+                        people = retry.get("people", [])
+                        if people:
+                            break
             ctx.audit.record("tool_call", tool="find_colleague",
                              detail=f"{name} -> {len(people)} match(es)")
             if not people:
                 return f"No one matching '{name}' found in the company directory." + _ADMIN_HINT
             lines = []
-            for p in people[:10]:
+            shown = people[:10]
+            for p in shown:
                 display = (p.get("names") or [{}])[0].get("displayName", name)
                 emails = ", ".join(e.get("value", "") for e in p.get("emailAddresses", []))
                 phones = ", ".join(ph.get("value", "") for ph in p.get("phoneNumbers", []))

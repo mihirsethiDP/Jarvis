@@ -15,13 +15,79 @@ _MAX_EXPORT_BYTES = 200_000
 # Google-native docs are exported to plain text; regular text files download as-is.
 _EXPORTABLE = {
     "application/vnd.google-apps.document": "text/plain",
-    "application/vnd.google-apps.spreadsheet": "text/csv",
+    # text/csv returns only the FIRST worksheet, with no hint that the
+    # others exist. Exporting as xlsx keeps every sheet; it is parsed
+    # below. Needs no extra scope.
+    "application/vnd.google-apps.spreadsheet":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.google-apps.presentation": "text/plain",
 }
 
 
 def _drive(ctx: ToolContext):
     return ctx.google_service("drive", "v3")
+
+
+# Binary formats Drive will not convert for us, read locally instead. These
+# are the bulk of a real company Drive, and drive_read used to refuse them.
+_BINARY_READABLE = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _extract_text(raw: bytes, mime: str, name: str) -> str:
+    """Turn downloaded bytes into readable text.
+
+    Import failures degrade to an explanation rather than an exception: the
+    document extras are optional, and a missing one must not look like a
+    broken file.
+    """
+    import io as _io
+
+    try:
+        if mime == "application/pdf":
+            from pypdf import PdfReader
+
+            reader = PdfReader(_io.BytesIO(raw))
+            pages = [(pg.extract_text() or "").strip() for pg in reader.pages]
+            body = "\n\n".join(
+                f"[page {i + 1}]\n{t}" for i, t in enumerate(pages) if t
+            )
+            return body or ("(no extractable text — this PDF is probably a scan, "
+                            "so it would need OCR)")
+        if mime == _DOCX:
+            import docx
+
+            d = docx.Document(_io.BytesIO(raw))
+            parts = [p.text for p in d.paragraphs if p.text.strip()]
+            for table in d.tables:
+                for row in table.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+            return "\n".join(parts)
+        if mime == _XLSX:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(_io.BytesIO(raw), read_only=True, data_only=True)
+            out = []
+            for ws in wb.worksheets:
+                out.append(f"[sheet: {ws.title}]")
+                for row in ws.iter_rows(values_only=True):
+                    if any(v is not None and str(v).strip() for v in row):
+                        out.append(" | ".join("" if v is None else str(v) for v in row))
+            return "\n".join(out)
+    except ImportError:
+        return (f"'{name}' needs the document extras to read. Install them with "
+                "pip install .[documents]")
+    except Exception as e:
+        return f"'{name}' could not be parsed ({type(e).__name__}: {e})."
+    return raw.decode("utf-8", errors="replace")
 
 
 def build_tools(ctx: ToolContext) -> list:
@@ -85,10 +151,12 @@ def build_tools(ctx: ToolContext) -> list:
                 request = service.files().export_media(fileId=file_id, mimeType=_EXPORTABLE[mime])
             elif mime.startswith("text/") or mime in ("application/json",):
                 request = service.files().get_media(fileId=file_id)
+            elif mime in _BINARY_READABLE:
+                request = service.files().get_media(fileId=file_id)
             else:
                 return (
                     f"'{name}' is {mime}, which I can't read as text. I can read Google "
-                    "Docs/Sheets/Slides and plain-text files."
+                    "Docs, Sheets and Slides, PDF, Word and Excel files, and plain text."
                 )
 
             buf = io.BytesIO()
@@ -99,7 +167,9 @@ def build_tools(ctx: ToolContext) -> list:
             while not done and buf.tell() <= _MAX_EXPORT_BYTES:
                 _, done = downloader.next_chunk()
             truncated = (not done) or buf.tell() > _MAX_EXPORT_BYTES
-            text = buf.getvalue()[:_MAX_EXPORT_BYTES].decode("utf-8", errors="replace")
+            raw = buf.getvalue()[:_MAX_EXPORT_BYTES]
+            effective = _EXPORTABLE.get(mime, mime)
+            text = _extract_text(raw, effective, name)
             ctx.audit.record("tool_call", tool="drive_read", detail=f"{name} ({file_id})")
             doc = as_document(f"gdrive:{name}", text)
             return doc + ("\n[Truncated — document is larger than the read limit.]" if truncated else "")

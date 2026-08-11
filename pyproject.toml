@@ -36,6 +36,13 @@ ui = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+# PDF, Word and Excel are the most common things in a company Drive; without
+# these, drive_read dead-ends on exactly the files people ask about most.
+documents = [
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+]
 dev = [
     "pytest>=8.0",
 ]

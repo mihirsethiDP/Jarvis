@@ -42,15 +42,32 @@ _YES = {"yes", "confirm", "confirmed", "do it", "go ahead", "send it", "yep", "y
 _LEADING_FILLERS = ("um", "umm", "uh", "er", "hmm", "so", "well", "actually",
                     "please", "just", "haan to", "to")
 
+# Affirmative phrases that happen to contain a deny word. Neutralised before
+# the deny scan, so "no problem" stops cancelling the action it agrees to.
+# Only settled idioms belong here — anything genuinely ambiguous must keep
+# failing closed.
+_AFFIRMATIVE_IDIOMS = ("no problem", "no problems", "no issue", "no issues",
+                       "no worries", "no doubt", "koi baat nahi", "koi dikkat nahi")
+
 # Single deny-words: if any of these appears anywhere in the answer, the
 # action is cancelled regardless of what else was said.
 _NO_WORDS = {"no", "nahi", "nahin", "mat", "cancel", "stop", "wait", "dont", "don't",
              "never", "ruko", "नहीं", "मत", "रुको", "galat", "गलत"}
 
 
+def _strip_idioms(normalized: str) -> str:
+    for idiom in _AFFIRMATIVE_IDIOMS:
+        normalized = normalized.replace(idiom, " ")
+    return " ".join(normalized.split())
+
+
 def _is_yes(normalized: str) -> bool:
     if not normalized:
         return False
+    had_idiom = _strip_idioms(normalized) != normalized
+    normalized = _strip_idioms(normalized)
+    if had_idiom and not normalized:
+        return True          # the whole answer was "no problem"
     words = normalized.split()
     if any(w in _NO_WORDS for w in words):
         return False  # deny wins, always
@@ -73,9 +90,13 @@ class ConfirmResult:
     user's words are kept in .correction so tools can hand them back to the
     model ("no, send it to Priya instead" should change the plan, not die)."""
 
-    def __init__(self, confirmed: bool, answer: str = ""):
+    def __init__(self, confirmed: bool, answer: str = "", refusal_reason: str = ""):
         self.confirmed = confirmed
         self.answer = answer
+        # Set when something other than the user blocked this — the safety
+        # limiter. Without it the model was told "the user did not confirm"
+        # and blamed the employee for a ceiling they never chose.
+        self.refusal_reason = refusal_reason
         normalized = normalize_answer(answer)
         plain_refusal = (not normalized) or all(
             w in _NO_WORDS for w in normalized.split()
@@ -117,7 +138,7 @@ class Confirmer:
                     "genuinely needed, it has to be done manually or the limit "
                     "raised deliberately."
                 )
-                return ConfirmResult(False)
+                return ConfirmResult(False, refusal_reason=reason)
 
         if not self.enabled:
             self.audit.record("confirmation", tool=action, detail=detail,
@@ -139,5 +160,10 @@ class Confirmer:
             ok=confirmed,
         )
         if confirmed and self.limiter is not None:
+            # Recorded here, at confirmation, rather than handed to each tool
+            # to record on success. Deferring it would mean a tool that forgot
+            # to call back never counted the action at all, and the ceiling
+            # would quietly stop being enforced. Over-counting a failed send
+            # is the safe direction to be wrong in.
             self.limiter.record(action)
         return ConfirmResult(confirmed, raw)

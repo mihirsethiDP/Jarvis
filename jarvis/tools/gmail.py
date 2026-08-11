@@ -18,6 +18,26 @@ from . import ToolContext, as_document, cancelled_by_user
 _MAX_RESULTS = 20
 _MAX_BODY_CHARS = 20_000
 _HTML_TAG = re.compile(r"<[^>]+>")
+# <style> and <script> bodies are not markup, so stripping tags alone left
+# their CONTENTS behind — Jarvis read stylesheet rules and JavaScript aloud
+# from any marketing email. Removed whole, before tags.
+_HTML_DROP_BLOCKS = re.compile(
+    r"<(script|style|head)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL
+)
+_HTML_BREAKS = re.compile(r"(?i)<(br\s*/?|/p|/div|/tr|/h[1-6])>")
+
+
+def _html_to_text(html: str) -> str:
+    """Readable text from an HTML email body."""
+    import html as _html
+
+    text = _HTML_DROP_BLOCKS.sub(" ", html)
+    text = _HTML_BREAKS.sub("\n", text)
+    text = _HTML_TAG.sub(" ", text)
+    # &nbsp; and friends were read out literally as "and n b s p".
+    text = _html.unescape(text)
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
 
 # System labels use their literal name as the label ID; anything else must be
 # resolved through users.labels.list (label IDs are per-account, not names).
@@ -52,7 +72,7 @@ def _extract_text(payload: dict) -> str:
     # satisfy this check would already have been returned by the parts loop
     # above (it runs the same check on itself before returning empty).
     if mime == "text/html" and body.get("data"):
-        return _HTML_TAG.sub(" ", _decode_b64url(body["data"]))
+        return _html_to_text(_decode_b64url(body["data"]))
     return ""
 
 
@@ -131,11 +151,30 @@ def build_tools(ctx: ToolContext) -> list:
                 return f"No emails matched '{query}'."
 
             lines = []
-            for stub in stubs:
-                msg = _gmail().users().messages().get(
-                    userId="me", id=stub["id"], format="metadata",
-                    metadataHeaders=["From", "Subject", "Date"],
-                ).execute()
+            # One HTTP batch rather than a round-trip per hit. Twenty sequential
+            # HTTPS calls put seconds of dead air into every "what's in my inbox".
+            fetched: dict[str, dict] = {}
+
+            def _collect(request_id, response, exception):
+                if exception is None:
+                    fetched[request_id] = response
+
+            batch = _gmail().new_batch_http_request(callback=_collect)
+            for i, stub in enumerate(stubs):
+                batch.add(
+                    _gmail().users().messages().get(
+                        userId="me", id=stub["id"], format="metadata",
+                        metadataHeaders=["From", "Subject", "Date"],
+                    ),
+                    request_id=str(i),
+                )
+            batch.execute()
+
+            for i, stub in enumerate(stubs):
+                msg = fetched.get(str(i))
+                if msg is None:
+                    lines.append(f"- id: {stub['id']} | (details unavailable)")
+                    continue
                 headers = msg.get("payload", {}).get("headers", [])
                 lines.append(
                     f"- id: {stub['id']} | from: {_header(headers, 'From')} | "
@@ -143,7 +182,17 @@ def build_tools(ctx: ToolContext) -> list:
                     f"date: {_header(headers, 'Date')} | snippet: {msg.get('snippet', '')}"
                 )
             ctx.audit.record("tool_call", tool="search_email", detail=query)
-            return as_document(f"gmail-search:{query}", "\n".join(lines))
+            listing = "\n".join(lines)
+            # Without this a capped search reads to the model as the complete
+            # set, and Jarvis reports "you have 20" when there are hundreds.
+            estimate = resp.get("resultSizeEstimate")
+            if resp.get("nextPageToken") or (estimate and estimate > len(stubs)):
+                listing += (
+                    f"\n[Showing {len(stubs)} of about {estimate or 'many'} matches — "
+                    "not the full set. Narrow the query, and say so when reporting "
+                    "a count.]"
+                )
+            return as_document(f"gmail-search:{query}", listing)
         except Exception as e:
             ctx.audit.record("tool_call", tool="search_email", detail=query, ok=False)
             return f"Gmail search failed: {e}"
@@ -162,7 +211,13 @@ def build_tools(ctx: ToolContext) -> list:
                 userId="me", id=message_id, format="full"
             ).execute()
             headers = msg.get("payload", {}).get("headers", [])
-            body = _extract_text(msg.get("payload", {}))[:_MAX_BODY_CHARS]
+            full = _extract_text(msg.get("payload", {}))
+            body = full[:_MAX_BODY_CHARS]
+            if len(full) > _MAX_BODY_CHARS:
+                body += (
+                    "\n[Truncated — the message is longer than the read limit, "
+                    "so do not treat this as the whole email.]"
+                )
             text = (
                 f"From: {_header(headers, 'From')}\n"
                 f"To: {_header(headers, 'To')}\n"
@@ -176,7 +231,8 @@ def build_tools(ctx: ToolContext) -> list:
             return f"Reading the email failed: {e}"
 
     @beta_tool
-    def send_email(to: str, subject: str, body: str, cc: str = "", attach_path: str = "") -> str:
+    def send_email(to: str, subject: str, body: str, cc: str = "",
+                   attach_path: str = "", reply_to_message_id: str = "") -> str:
         """Send an email from the user's Gmail account, optionally attaching a
         local file. The user hears the recipient, subject, and any attachment
         and must explicitly confirm before anything is sent.
@@ -187,7 +243,10 @@ def build_tools(ctx: ToolContext) -> list:
             body: Plain-text body of the email.
             cc: Optional CC addresses, comma-separated.
             attach_path: Optional path of a local file (within the allowed
-                folders, e.g. the user's Desktop) to attach.
+                folders configured for this machine) to attach.
+            reply_to_message_id: When replying, the id of the message being
+                replied to (from search_email). Keeps the reply in the same
+                conversation instead of starting a new one.
         """
         if not ctx.permissions.require("email_send", "send email from your Gmail account"):
             return "The user declined email access."
@@ -234,6 +293,26 @@ def build_tools(ctx: ToolContext) -> list:
                 msg["Cc"] = cc
             msg["Subject"] = subject
             msg.set_content(body)
+
+            # Threading. Without In-Reply-To/References every "reply to
+            # Ranjana" started a brand-new conversation, so the recipient lost
+            # the context and the thread fragmented in both mailboxes.
+            send_body: dict = {}
+            if reply_to_message_id:
+                try:
+                    original = _gmail().users().messages().get(
+                        userId="me", id=reply_to_message_id, format="metadata",
+                        metadataHeaders=["Message-ID", "References", "Subject"],
+                    ).execute()
+                    orig_headers = original.get("payload", {}).get("headers", [])
+                    parent = _header(orig_headers, "Message-ID")
+                    if parent:
+                        msg["In-Reply-To"] = parent
+                        refs = _header(orig_headers, "References")
+                        msg["References"] = f"{refs} {parent}".strip()
+                    send_body["threadId"] = original.get("threadId")
+                except Exception:
+                    pass  # a failed lookup must not block the send
             if attachment:
                 import mimetypes
 
@@ -242,7 +321,8 @@ def build_tools(ctx: ToolContext) -> list:
                 msg.add_attachment(attachment.read_bytes(), maintype=maintype,
                                    subtype=subtype, filename=attachment.name)
             encoded = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-            _gmail().users().messages().send(userId="me", body={"raw": encoded}).execute()
+            send_body["raw"] = encoded
+            _gmail().users().messages().send(userId="me", body=send_body).execute()
             ctx.audit.record("tool_call", tool="send_email",
                              detail=f"to={to} subject={subject}", decision="confirmed")
             return f"Email sent to {to}."

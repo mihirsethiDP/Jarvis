@@ -10,6 +10,8 @@ can review and revoke; session grants expire.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -113,20 +115,40 @@ class PermissionManager:
 
     # -- store ------------------------------------------------------------
     def _load(self) -> dict[str, dict]:
-        if self.store_path.exists():
+        if not self.store_path.exists():
+            return {}
+        try:
+            data = json.loads(self.store_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+            raise ValueError("permissions file is not an object")
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            # Starting empty was silent, and the next _save() overwrote the
+            # file — so a half-written read turned into the permanent loss of
+            # every decision made in the setup wizard. Keep the evidence and
+            # say so out loud.
+            backup = self.store_path.with_suffix(".corrupt.json")
             try:
-                data = json.loads(self.store_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return data
-            except (json.JSONDecodeError, OSError):
-                pass
-        return {}
+                backup.write_bytes(self.store_path.read_bytes())
+            except OSError:
+                backup = None
+            print(
+                f"Warning: could not read {self.store_path.name} ({e}). Your saved "
+                "permission decisions are not being applied this session"
+                + (f"; the file was preserved as {backup.name}." if backup else ".")
+                + " Re-run the setup wizard to restore them.",
+                file=sys.stderr,
+            )
+            return {}
 
     def _save(self) -> None:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        self.store_path.write_text(
-            json.dumps(self._persistent, indent=2), encoding="utf-8"
-        )
+        # Atomic replace: a truncate-then-write leaves a window where a
+        # concurrent read sees an empty file and treats every capability as
+        # ungranted.
+        tmp = self.store_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self._persistent, indent=2), encoding="utf-8")
+        os.replace(tmp, self.store_path)
 
     # -- API ---------------------------------------------------------------
     def granted(self, capability: str) -> bool:

@@ -32,9 +32,14 @@ def test_find_colleague_uses_directory_source_and_readmask(tmp_path, audit):
     tools = {t.name: t for t in gcontacts_mod.build_tools(ctx)}
     out = tools["find_colleague"]("Priya")
     assert "priya@digitalpaani.com" in out
+    # DOMAIN_CONTACT is included deliberately: it covers the shared contacts
+    # an admin publishes — clients, vendors, site engineers — who were
+    # otherwise reported as "not in the company directory".
     service.people().searchDirectoryPeople.assert_called_with(
         query="Priya", readMask="names,emailAddresses,phoneNumbers",
-        sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
+        sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+                 "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"],
+        pageSize=30,
     )
 
 

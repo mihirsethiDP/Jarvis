@@ -7,6 +7,7 @@ import sys
 import threading
 from datetime import datetime
 
+from .audio import chime
 from .brain import JarvisAgent
 from .config import Config
 from .io_channel import IOChannel, TextIO, VoiceIO
@@ -318,9 +319,14 @@ class JarvisApp:
                     if not v["wake"].wait(should_stop=self._stop.is_set):
                         return          # Quit pressed while waiting for the wake word
                     self._publish("listening")
+                    # The cue lands before recording so the user knows the
+                    # microphone is open. Without it there was no way to tell
+                    # "I'm recording you" from "nothing happened".
+                    chime.play("listening")
                     print("(wake word detected — listening…)")
                     audio = v["recorder"].record()
                     self._publish("transcribing")
+                    chime.play("done")
                     text = v["stt"].transcribe(audio)
                     if not text:
                         v["speaker"].say("Sorry, I didn't catch that.")
@@ -331,11 +337,19 @@ class JarvisApp:
                         return
                     # Follow-up window: no wake word needed to continue.
                     while follow_secs > 0:
-                        self._publish("listening", "follow-up — just speak")
+                        self._publish("listening", "still listening — just speak")
+                        chime.play("listening")
                         audio = v["recorder"].record(start_window=follow_secs)
+                        if audio.size == 0:
+                            break  # genuine silence — back to the wake word
                         followup = v["stt"].transcribe(audio)
                         if not followup:
-                            break  # silence — back to waiting for the wake word
+                            # Speech was captured but could not be transcribed.
+                            # Dropping it silently looked like being ignored;
+                            # say so and keep the window open.
+                            v["speaker"].say("Sorry, I didn't catch that.")
+                            v["mic"].drain()
+                            continue
                         print(f"You: {followup}")
                         if not self._speak_turn(followup):
                             return

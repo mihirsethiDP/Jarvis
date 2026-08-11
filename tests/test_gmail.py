@@ -54,24 +54,63 @@ def test_extract_text_recurses_nested_multipart():
     assert gmail_mod._extract_text(payload) == "nested body"
 
 
-def test_search_email_wraps_results_and_calls_metadata(tmp_path, audit):
+def _batching_service(per_message):
+    """A Gmail mock that honours the batch API.
+
+    Metadata is fetched in one HTTP batch rather than a round-trip per hit —
+    twenty sequential calls put seconds of dead air into every inbox query.
+    """
     service = MagicMock()
-    service.users().messages().list.return_value.execute.return_value = {
-        "messages": [{"id": "m1"}]
-    }
-    service.users().messages().get.return_value.execute.return_value = {
+
+    class FakeBatch:
+        def __init__(self, callback):
+            self._callback = callback
+            self._ids = []
+
+        def add(self, request, request_id):
+            self._ids.append(request_id)
+
+        def execute(self):
+            for rid in self._ids:
+                self._callback(rid, per_message, None)
+
+    service.new_batch_http_request.side_effect = lambda callback: FakeBatch(callback)
+    return service
+
+
+def test_search_email_wraps_results_and_batches_metadata(tmp_path, audit):
+    service = _batching_service({
         "payload": {"headers": [
             {"name": "From", "value": "a@b.com"}, {"name": "Subject", "value": "Hi"},
         ]},
         "snippet": "preview text",
+    })
+    service.users().messages().list.return_value.execute.return_value = {
+        "messages": [{"id": "m1"}]
     }
     ctx = make_ctx(tmp_path, audit, ["allow once"], service)
     out = gmail_mod.build_tools(ctx)[0]("pump leak")
     assert "untrusted data" in out
     assert "a@b.com" in out and "preview text" in out
-    service.users().messages().get.assert_called_with(
-        userId="me", id="m1", format="metadata", metadataHeaders=["From", "Subject", "Date"]
-    )
+    service.new_batch_http_request.assert_called_once()
+
+
+def test_a_capped_search_says_it_is_not_the_whole_set(tmp_path, audit):
+    # Without this the model reads 20 results as the complete answer and
+    # Jarvis reports "you have 20" when there are hundreds.
+    service = _batching_service({
+        "payload": {"headers": [{"name": "From", "value": "a@b.com"}]},
+        "snippet": "s",
+    })
+    service.users().messages().list.return_value.execute.return_value = {
+        "messages": [{"id": f"m{i}"} for i in range(20)],
+        "resultSizeEstimate": 412,
+        "nextPageToken": "more",
+    }
+    ctx = make_ctx(tmp_path, audit, ["allow once"], service)
+    out = gmail_mod.build_tools(ctx)[0]("is:unread")
+    assert "not the full set" in out
+    assert "412" in out
 
 
 def test_read_email_formats_headers_and_body(tmp_path, audit):

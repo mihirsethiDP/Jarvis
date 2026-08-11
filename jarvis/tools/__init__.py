@@ -76,6 +76,17 @@ def cancelled_by_user(result, action_phrase: str) -> str:
     correction to act on — a mistake mid-flow should change the plan, not
     end the conversation.
     """
+    # A safety-ceiling refusal is not the user's decision. Reporting it as one
+    # made Jarvis tell the employee they had declined something they were
+    # never asked about.
+    refusal_reason = getattr(result, "refusal_reason", "")
+    if refusal_reason:
+        return (
+            f"Refused by the safety limiter, not by the user: {refusal_reason}. "
+            "Tell the user the limit was reached — do not say they declined, and "
+            "do not retry this action."
+        )
+
     base = f"Cancelled — the user did not confirm {action_phrase}."
     correction = getattr(result, "correction", "")
     if correction:
