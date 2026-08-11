@@ -13,6 +13,8 @@ from .microphone import Microphone
 from .microphone import BLOCK_SIZE
 
 _BLOCK_SECONDS = BLOCK_SIZE / 16000.0  # 32 ms
+# Shorter than any real word; guards against a cough being treated as speech.
+_SHORT_UTTERANCE_SECONDS = 0.18
 
 
 class UtteranceRecorder:
@@ -23,7 +25,7 @@ class UtteranceRecorder:
         max_seconds: float = 20.0,
         silence_seconds: float = 1.8,
         start_window_seconds: float = 6.0,
-        min_speech_seconds: float = 0.7,
+        min_speech_seconds: float = 0.3,
     ):
         self.mic = mic
         self.max_seconds = max_seconds
@@ -85,6 +87,20 @@ class UtteranceRecorder:
                     if (silence_run >= self.silence_seconds
                             and speech_time >= self.min_speech_seconds):
                         break
+                    # ...but "yes", "haan" and "no" are complete utterances,
+                    # and they are the most frequent thing anyone says to
+                    # Jarvis. Requiring min_speech of them meant every single
+                    # confirmation ran to the 20-second cap before
+                    # transcription even started. A brief utterance followed
+                    # by a markedly longer pause is finished.
+                    if (speech_time >= _SHORT_UTTERANCE_SECONDS
+                            and silence_run >= self.silence_seconds * 1.6):
+                        break
+                    # A blip too short to be a word, followed by a long
+                    # silence, was a cough or a door. Give up rather than
+                    # holding the microphone open to the cap for it.
+                    if silence_run >= self.silence_seconds * 2.0:
+                        return np.empty(0, dtype=np.float32)
                 elif elapsed >= window:
                     return np.empty(0, dtype=np.float32)  # user never spoke
 

@@ -85,3 +85,19 @@ def test_max_seconds_is_still_enforced():
     rec = UtteranceRecorder(FakeMic([2000] * seconds(30)), max_seconds=4.0)
     audio = rec.record()
     assert len(audio) / 16000 <= 4.5
+
+
+def test_a_one_word_yes_ends_promptly():
+    # The most frequent utterance in the whole product. min_speech_seconds
+    # meant a short "yes" never satisfied the end condition, so every single
+    # confirmation ran to the 20-second cap before transcription even began.
+    levels = [2200] * seconds(0.35) + [40] * seconds(8.0)
+    rec = UtteranceRecorder(FakeMic(levels), silence_seconds=1.8, max_seconds=20.0)
+    captured = len(rec.record()) / 16000
+    assert captured < 4.0, f"a one-word answer took {captured:.1f}s to endpoint"
+
+
+def test_a_cough_does_not_hold_the_microphone_open():
+    levels = [2500] * seconds(0.12) + [40] * seconds(8.0)
+    rec = UtteranceRecorder(FakeMic(levels), silence_seconds=1.8, max_seconds=20.0)
+    assert rec.record().size == 0

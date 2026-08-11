@@ -286,8 +286,13 @@ def build_tools(ctx: ToolContext) -> list:
             resp = _chat().spaces().messages().list(
                 parent=space_id,
                 pageSize=max(1, min(int(max_results), _MAX_MESSAGES)),
+                # The API defaults to oldest-first, so "recent messages" was
+                # returning the opening lines of a years-old conversation.
+                orderBy="createTime desc",
             ).execute()
-            messages = resp.get("messages", [])
+            # Fetched newest-first, shown oldest-first so the transcript reads
+            # in the order it was said.
+            messages = list(reversed(resp.get("messages", [])))
             ctx.audit.record("tool_call", tool="read_chat_messages", detail=space_id)
             if not messages:
                 return f"No messages found in {space_id}."

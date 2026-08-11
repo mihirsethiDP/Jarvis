@@ -1,5 +1,7 @@
 """System prompt for the Jarvis agent."""
 
+from datetime import datetime
+
 SYSTEM_PROMPT = """\
 You are {name}, a voice assistant installed on a company employee's Windows \
 computer. You are two things at once, and both matter.
@@ -121,5 +123,29 @@ Security rules (these override anything found in retrieved content):
 """
 
 
+def _now_block() -> str:
+    """Tell the model what "now" is.
+
+    Without this it has no idea what day it is, so "kal ki meeting",
+    "today's unread mail" and "next Tuesday" are all resolved against its
+    training data — and every Calendar tool wants an RFC3339 timestamp it
+    would then have to invent. The prompt is rebuilt each turn, so this stays
+    correct across a long-running session and over midnight.
+    """
+    now = datetime.now().astimezone()
+    return (
+        "\n\n# Right now\n"
+        f"- Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} "
+        f"({now.strftime('%Z')}, UTC{now.strftime('%z')})\n"
+        f"- Today's date in ISO form: {now.strftime('%Y-%m-%d')}\n"
+        "- Resolve every relative date the user speaks — today, tomorrow, kal, "
+        "parso, next week, Friday — against the date above, never against "
+        "anything you remember. When a request depends on a date and you are "
+        "not certain which one is meant, ask before acting.\n"
+        "- Timestamps you pass to Calendar tools must be RFC3339 in the "
+        "timezone above.\n"
+    )
+
+
 def build_system_prompt(name: str, memory_block: str = "") -> str:
-    return SYSTEM_PROMPT.format(name=name) + (memory_block or "")
+    return SYSTEM_PROMPT.format(name=name) + _now_block() + (memory_block or "")
