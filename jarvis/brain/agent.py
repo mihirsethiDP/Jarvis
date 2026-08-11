@@ -41,6 +41,9 @@ class JarvisAgent:
         # stuck, or finished.
         self.on_narrate = on_narrate or (lambda _text: None)
         self._narrated: set[str] = set()
+        # What the user switched off at setup, so Jarvis can explain the gap
+        # instead of inventing a workaround or denying the ability exists.
+        self.denied_capabilities: list[str] = []
         self.client = anthropic.Anthropic()
         self.name = str(config.get("assistant.name", "Jarvis"))
         self.memory = memory
@@ -62,7 +65,7 @@ class JarvisAgent:
         """Rebuilt per turn so newly remembered facts — and revocations made
         from a console — take effect immediately."""
         block = self.memory.as_prompt_block() if self._may_recall() else ""
-        return build_system_prompt(self.name, block)
+        return build_system_prompt(self.name, block, self.denied_capabilities)
 
     # ------------------------------------------------------------------
     def run_turn(self, user_text: str) -> str:

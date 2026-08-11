@@ -97,8 +97,9 @@ class JarvisApp:
             print("Note: you denied memory recall but allowed remembering — Jarvis "
                   "will store facts it never uses. Consider denying both, or "
                   f"allowing recall: {cli_hint('setup')}")
+        all_tools = build_all_tools(ctx)
         self.agent = JarvisAgent(
-            config, build_all_tools(ctx), self.audit, on_status=self._publish,
+            config, all_tools, self.audit, on_status=self._publish,
             on_narrate=self._narrate,
             memory=self.memory,
             # Asked once per session, and only when memory is non-empty, so a
@@ -108,6 +109,7 @@ class JarvisApp:
             ),
             turn_budget=self.turn_budget,
         )
+        self.agent.denied_capabilities = getattr(ctx, "denied_capabilities", [])
         self.io: IOChannel = io
 
     # ------------------------------------------------------------------

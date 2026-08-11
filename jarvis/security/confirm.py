@@ -85,6 +85,20 @@ def _is_yes(normalized: str) -> bool:
     return words[0] in _YES or " ".join(words[:2]) in _YES
 
 
+def _is_unclear(raw: str) -> bool:
+    """True when the answer was neither a yes nor a recognisable no.
+
+    Silence and noise get one more chance; an explicit refusal does not — it
+    would be obnoxious to ask "are you sure?" every time someone says no.
+    """
+    normalized = normalize_answer(raw)
+    if not normalized:
+        return True
+    if _is_yes(normalized):
+        return False
+    return not any(w in _NO_WORDS for w in _strip_idioms(normalized).split())
+
+
 class ConfirmResult:
     """Truthy iff confirmed. When declined with more than a plain no, the
     user's words are kept in .correction so tools can hand them back to the
@@ -149,6 +163,14 @@ class Confirmer:
             raw = self.io.ask(
                 f"Please confirm — {summary} Say yes to proceed, or no to cancel."
             )
+            # A mis-transcribed answer used to cancel outright, so the user
+            # said yes, was ignored, and had to start the whole request again.
+            # Ask once more — but only when the answer was unintelligible, not
+            # when it was a clear refusal, and still fail closed after that.
+            if _is_unclear(raw):
+                raw = self.io.ask(
+                    "Sorry, I didn't catch that. Say yes to go ahead, or no to cancel."
+                )
         except EOFError:
             raw = ""  # input channel closed — treat as cancelled
         confirmed = _is_yes(normalize_answer(raw))

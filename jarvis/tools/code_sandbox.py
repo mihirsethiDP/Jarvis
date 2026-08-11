@@ -156,6 +156,26 @@ def validate(source: str) -> None:
                     )
 
 
+def _imports_summary(source: str) -> str:
+    """What the program actually pulls in.
+
+    Reading 600 characters of Python aloud was unverifiable by ear, so the
+    confirmation carried no information the user could act on. Naming the
+    libraries is something they can actually judge."""
+    import ast as _ast
+
+    names: set[str] = set()
+    try:
+        for node in _ast.walk(_ast.parse(source)):
+            if isinstance(node, _ast.Import):
+                names.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, _ast.ImportFrom) and node.module:
+                names.add(node.module.split(".")[0])
+    except SyntaxError:
+        return "no importable libraries"
+    return ", ".join(sorted(names)) if names else "no external libraries"
+
+
 def build_tools(ctx: ToolContext) -> list:
     @beta_tool
     def run_code(code: str, purpose: str = "") -> str:

@@ -147,5 +147,26 @@ def _now_block() -> str:
     )
 
 
-def build_system_prompt(name: str, memory_block: str = "") -> str:
-    return SYSTEM_PROMPT.format(name=name) + _now_block() + (memory_block or "")
+def _denied_block(denied: list[str]) -> str:
+    """Name what the user switched off.
+
+    A denied capability removes the tool outright, so the model could not see
+    it and had no way to explain the gap — it would either invent a
+    workaround or claim it simply could not do that at all.
+    """
+    if not denied:
+        return ""
+    return (
+        "\n\n# Switched off by this user\n"
+        "At setup they turned these off: " + ", ".join(denied) + ".\n"
+        "You have no tools for them. If they ask for one, say plainly that "
+        "they turned it off and that re-running the Jarvis setup wizard turns "
+        "it back on. Never pretend the ability does not exist, and never look "
+        "for another route to the same thing.\n"
+    )
+
+
+def build_system_prompt(name: str, memory_block: str = "",
+                        denied: list[str] | None = None) -> str:
+    return (SYSTEM_PROMPT.format(name=name) + _now_block()
+            + _denied_block(denied or []) + (memory_block or ""))

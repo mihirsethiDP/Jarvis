@@ -68,3 +68,44 @@ def test_affirmatives_confirm(answer):
 def test_refusals_and_hedges_never_confirm(answer):
     # Deny wins anywhere, and nothing hedged belongs in a consent gate.
     assert _is_yes(normalize_answer(answer)) is False, f"{answer!r} leaked through"
+
+
+# -- idioms and re-asking ------------------------------------------------
+@pytest.mark.parametrize("answer", [
+    "no problem", "no problem go ahead", "koi baat nahi", "yes no problem",
+])
+def test_affirmative_idioms_containing_a_deny_word_still_confirm(answer):
+    # Deny-words were scanned per word anywhere in the answer, so "no problem"
+    # cancelled the very action it was agreeing to.
+    assert _is_yes(normalize_answer(answer)) is True
+
+
+@pytest.mark.parametrize("answer", ["no issues at all", "no", "no wait"])
+def test_genuine_denials_are_unaffected_by_the_idiom_list(answer):
+    assert _is_yes(normalize_answer(answer)) is False
+
+
+def test_a_garbled_answer_is_asked_again_rather_than_cancelled(audit):
+    from conftest import FakeIO
+    from jarvis.security.confirm import Confirmer
+
+    io = FakeIO(["mmhm grrk", "yes"])
+    assert bool(Confirmer(io, audit).confirm("send_email", "I will send this."))
+    assert len(io.asked) == 2, "a mis-transcribed yes should get one more chance"
+
+
+def test_an_explicit_no_is_not_second_guessed(audit):
+    from conftest import FakeIO
+    from jarvis.security.confirm import Confirmer
+
+    io = FakeIO(["no"])
+    assert not Confirmer(io, audit).confirm("send_email", "I will send this.")
+    assert len(io.asked) == 1, "a clear refusal must not be re-asked"
+
+
+def test_two_unclear_answers_still_fail_closed(audit):
+    from conftest import FakeIO
+    from jarvis.security.confirm import Confirmer
+
+    io = FakeIO(["mmhm", "shhh"])
+    assert not Confirmer(io, audit).confirm("send_email", "I will send this.")

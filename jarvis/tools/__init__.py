@@ -147,6 +147,20 @@ _TOOL_CAPABILITIES = {
 }
 
 
+# Spoken names for the things a user can switch off at setup.
+_CAPABILITY_LABELS = {
+    "files_read": "reading local files", "files_write": "writing local files",
+    "drive_read": "reading Google Drive", "drive_write": "writing to Google Drive",
+    "email_read": "reading Gmail", "email_send": "sending email",
+    "email_organize": "organising mail", "chat_read": "reading Google Chat",
+    "chat_send": "sending Chat messages", "calendar_read": "reading your calendar",
+    "calendar_write": "changing your calendar", "directory_read": "the company directory",
+    "ask_claude": "asking Claude directly", "web_search": "web search",
+    "weather_read": "weather lookups", "code_run": "running code",
+    "memory_write": "remembering things",
+}
+
+
 def build_all_tools(ctx: ToolContext) -> list:
     """Assemble the tool list for the agent, honoring standing denials."""
     from . import (ai_bridge, claude_bridge, code_sandbox, gcalendar, gchat,
@@ -166,6 +180,18 @@ def build_all_tools(ctx: ToolContext) -> list:
     tools += web_search.build_tools(ctx)
     if ctx.memory is not None:
         tools += memory_tools.build_tools(ctx)
+    # A standing denial removes the tool entirely, which is the right security
+    # behaviour — but the model was told nothing, so it would either invent a
+    # workaround or claim it had no such ability at all. Name what was turned
+    # off so Jarvis can say "you switched Drive access off at setup" instead.
+    denied_labels = sorted({
+        _CAPABILITY_LABELS.get(cap, cap)
+        for t in tools
+        for cap in [_TOOL_CAPABILITIES.get(t.name, "")]
+        if cap and ctx.permissions.denied(cap)
+    })
+    ctx.denied_capabilities = denied_labels
+
     tools = [
         t for t in tools
         if not ctx.permissions.denied(_TOOL_CAPABILITIES.get(t.name, ""))

@@ -366,7 +366,12 @@ def build_tools(ctx: ToolContext) -> list:
                                  detail=f"{action} label={label} id={message_id}", ok=False)
                 return f"Looking up the label '{label}' failed: {e}"
             if label_id is None:
-                return f"No label named '{label}' exists in this Gmail account."
+                # Dead-ending here left the model with nowhere to go. Naming
+                # the real labels lets it offer the closest one instead.
+                available = ", ".join(sorted(label_cache)[:25]) or "(none found)"
+                return (f"No label named '{label}' exists in this account. "
+                        f"The labels that do exist are: {available}. Ask the user "
+                        "which one they meant — Jarvis cannot create labels.")
             (add if action == "add_label" else remove).append(label_id)
             summary = f"{'add' if action == 'add_label' else 'remove'} the label '{label}' " \
                       f"{'to' if action == 'add_label' else 'from'} this email"
