@@ -156,4 +156,8 @@ security:
 
 ui:
   enabled: false
+  # A small always-on-top strip on the desktop showing what Jarvis is doing.
+  # This is the part that makes an always-running assistant visible; the full
+  # page is only open when you open it.
+  overlay: true
   port: 8763   # always bound to 127.0.0.1 (loopback only, not configurable)

@@ -22,15 +22,28 @@ def test_gibberish_fails_closed(tmp_path, audit):
     assert pm.require("email_send", "send email") is False
 
 
-def test_allow_once_does_not_persist(tmp_path, audit):
+def test_allow_once_lasts_one_request_and_no_longer(tmp_path, audit):
+    """"Once" means this request, not this single tool call.
+
+    It used to set no state at all, so one request that touched Drive twice
+    and Gmail once interrogated the user at every step after they had already
+    said yes. It must still expire at the request boundary, and never persist
+    to disk.
+    """
     pm, io = make_pm(tmp_path, audit, ["allow once", "", ""])
+    pm.begin_turn()
     assert pm.require("files_read", "read files") is True
-    # Second call must ask again, and silence still denies — but silence now
-    # gets one repeat first, because a mis-transcribed answer was previously
-    # indistinguishable from a refusal.
+    assert pm.require("files_read", "read files") is True   # same request
+    assert len(io.asked) == 1
+
+    pm.begin_turn()                                          # next request
+    # Silence still denies, but gets one repeat first, because a
+    # mis-transcribed answer was previously indistinguishable from a refusal.
     assert pm.require("files_read", "read files") is False
     assert len(io.asked) == 3
     assert "didn't catch that" in io.asked[-1]
+    assert not (tmp_path / "perms.json").exists() or \
+        "files_read" not in (tmp_path / "perms.json").read_text(encoding="utf-8")
 
 
 def test_session_grant_skips_prompt(tmp_path, audit):

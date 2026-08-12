@@ -55,6 +55,20 @@ _NO_WORDS = {"no", "nahi", "nahin", "mat", "cancel", "stop", "wait", "dont", "do
              "never", "ruko", "नहीं", "मत", "रुको", "galat", "गलत"}
 
 
+# What may follow a leading affirmative without changing what was agreed to.
+# Anything outside this set — "but", "instead", a name, a time — means the
+# user qualified the action, and a qualified action is not the one that was
+# read back to them. Built from the affirmatives themselves plus pleasantries,
+# so "haan bhej do" and "yes go ahead" still confirm.
+_HARMLESS_TAIL = (
+    set(_LEADING_FILLERS)
+    | {word for phrase in _YES for word in phrase.split()}
+    | {"great", "thanks", "thank", "you", "perfect", "lovely", "good", "cool",
+       "it", "that", "this", "ji", "na", "toh", "hi", "please",
+       "is", "are", "was", "right", "exactly", "definitely", "indeed", "sahi"}
+)
+
+
 def _strip_idioms(normalized: str) -> str:
     for idiom in _AFFIRMATIVE_IDIOMS:
         normalized = normalized.replace(idiom, " ")
@@ -81,8 +95,17 @@ def _is_yes(normalized: str) -> bool:
         return False
     if " ".join(words) in _YES:
         return True
-    # Natural speech pads affirmatives: "yes please", "haan kar do".
-    return words[0] in _YES or " ".join(words[:2]) in _YES
+
+    # A leading affirmative only counts if nothing substantive follows it.
+    # Matching on the first word or two alone meant "yes, but send it to
+    # Priya instead" confirmed the ORIGINAL action: Jarvis mailed the wrong
+    # colleague and reported success, while the correction was discarded.
+    # The mirror case, "no, send it to Priya instead", was already handled —
+    # this is the same sentence with the affirmative in front.
+    for size in (2, 1):
+        if len(words) >= size and " ".join(words[:size]) in _YES:
+            return all(w in _HARMLESS_TAIL for w in words[size:])
+    return False
 
 
 def _is_unclear(raw: str) -> bool:
@@ -96,7 +119,16 @@ def _is_unclear(raw: str) -> bool:
         return True
     if _is_yes(normalized):
         return False
-    return not any(w in _NO_WORDS for w in _strip_idioms(normalized).split())
+    words = _strip_idioms(normalized).split()
+    if any(w in _NO_WORDS for w in words):
+        return False
+    # A qualified affirmative ("yes, but send it to Priya instead") was heard
+    # perfectly — it is a correction, not a mumble. Asking "sorry, I didn't
+    # catch that" about it would be maddening, and it needs to reach the model
+    # as a correction instead.
+    if words and (words[0] in _YES or len(words) >= 3):
+        return False
+    return True
 
 
 class ConfirmResult:

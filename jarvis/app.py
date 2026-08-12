@@ -10,7 +10,7 @@ from datetime import datetime
 from .audio import chime
 from .brain import JarvisAgent
 from .config import Config
-from .io_channel import IOChannel, TextIO, VoiceIO
+from .io_channel import IOChannel, SwitchableIO, TextIO, VoiceIO, WebIO
 from .memory import MemoryStore
 from .paths import cli_hint
 from .security import AuditLog, Confirmer, PermissionManager
@@ -52,6 +52,14 @@ class JarvisApp:
         self.audit = AuditLog(anchored=True)
         self.state_server = None
         self._stop = threading.Event()
+        # Serialises turns: the voice loop and a typed request must never run
+        # the agent at the same time, or they share one conversation history.
+        # A plain Lock, not an RLock — nothing here nests, and RLock has no
+        # .locked() before Python 3.14, which is what tells the page we are busy.
+        self._agent_lock = threading.Lock()
+        self._push_to_talk = threading.Event()
+        self._web_io = None
+        self.overlay = None
 
         if with_ui or config.get("ui.enabled", False):
             try:
@@ -59,12 +67,27 @@ class JarvisApp:
 
                 # Loopback only, by design — the page shows live conversation
                 # state and must never be reachable from the LAN.
-                self.state_server = StateServer(port=int(config.get("ui.port", 8763)),
-                                               on_quit=self._quit_from_ui)
+                self.state_server = StateServer(
+                    port=int(config.get("ui.port", 8763)),
+                    on_quit=self._quit_from_ui,
+                    on_ask=self._ask_from_ui,
+                    on_listen=self._listen_from_ui,
+                    on_answer=self._answer_from_ui,
+                )
                 # Every gated action already flows through the audit log, so
                 # subscribing here gives the live view complete coverage.
                 self.audit.subscribe(self.state_server.record_activity)
                 self.state_server.start()
+
+                # The always-there piece. Nobody keeps a browser window open
+                # all day, so without this Jarvis is invisible for most of the
+                # day it is meant to be running.
+                if config.get("ui.overlay", True):
+                    from .ui.overlay import Overlay
+
+                    overlay = Overlay(port=int(config.get("ui.port", 8763)),
+                                      on_listen=self._listen_from_ui)
+                    self.overlay = overlay if overlay.start() else None
             except ImportError:
                 print("UI dependencies missing — run `pip install .[ui]`. Continuing without UI.")
 
@@ -75,7 +98,14 @@ class JarvisApp:
                 print("Voice dependencies unavailable — falling back to text mode. "
                       "Install them with `pip install .[voice]`.")
 
-        io = self._build_io()
+        # A typed request is answered on the page; a spoken one out loud.
+        server = self.state_server
+        self._web_io = WebIO(
+            publish_say=(server.publish_message if server is None
+                         else (lambda t: server.publish_message("jarvis", t))),
+            publish_prompt=(lambda p: None) if server is None else server.publish_prompt,
+        )
+        io = SwitchableIO(self._build_io())
         self.permissions = PermissionManager(
             io, self.audit, session_grant_minutes=config.session_grant_minutes,
             on_status=self._publish,
@@ -118,6 +148,8 @@ class JarvisApp:
     def _publish(self, state: str, detail: str = "") -> None:
         if self.state_server is not None:
             self.state_server.publish(state, detail)
+        if self.overlay is not None:
+            self.overlay.publish(state, detail)
 
     def _quit_from_ui(self) -> None:
         """Quit button on the status page. The voice loop notices within a
@@ -126,6 +158,55 @@ class JarvisApp:
         self.audit.record("shutdown", detail="quit from status page", decision="ui")
         self._stop.set()
         threading.Timer(4.0, lambda: os._exit(0)).start()
+
+    # -- requests arriving from the status page ---------------------------
+    def _ui_busy(self) -> bool:
+        return self._agent_lock.locked()
+
+    def _ask_from_ui(self, text: str) -> bool:
+        """A typed request. Runs on a worker so the HTTP call returns at once.
+
+        Refused rather than queued while a turn is already running: two turns
+        interleaved would share one conversation history and one microphone.
+        """
+        if self._ui_busy():
+            return False
+        threading.Thread(target=self._run_ui_turn, args=(text,),
+                         daemon=True, name="jarvis-ui-turn").start()
+        return True
+
+    def _run_ui_turn(self, text: str) -> None:
+        with self._agent_lock:
+            server = self.state_server
+            if server is not None:
+                server.publish_message("you", text)
+            # Route this turn's permission and confirmation questions to the
+            # page. Someone who typed may have done so precisely because they
+            # cannot speak, so asking them out loud would strand the request.
+            self.io.use(self._web_io)
+            self.permissions.begin_turn()
+            try:
+                reply = self.agent.run_turn(text)
+            except Exception as e:
+                self.audit.record("error", tool="ui_turn", detail=str(e), ok=False)
+                reply = "Something went wrong handling that — please try again."
+            finally:
+                self.io.use(None)
+                if server is not None:
+                    server.clear_prompt()
+            if server is not None:
+                server.publish_message("jarvis", reply)
+            self._publish("idle")
+
+    def _listen_from_ui(self) -> bool:
+        """Push-to-talk: record one utterance with no wake word."""
+        if self.voice is None or self._ui_busy():
+            return False
+        self._push_to_talk.set()
+        return True
+
+    def _answer_from_ui(self, answer: str) -> None:
+        self._web_io.deliver(answer)
 
     def _narrate(self, phrase: str) -> None:
         """Say aloud what Jarvis is about to do.
@@ -264,10 +345,20 @@ class JarvisApp:
                 "Until then, Jarvis asks at first use of each capability."
             )
         self.audit.record("startup", detail="voice" if self.voice else "text")
-        if self.voice is not None:
-            self._run_voice()
-        else:
-            self._run_text()
+        try:
+            if self.voice is not None:
+                self._run_voice()
+            else:
+                self._run_text()
+        finally:
+            if self.overlay is not None:
+                self.overlay.close()
+                # Tk was created on a worker thread; letting the interpreter
+                # finalize with it still around makes Tcl abort the process
+                # with exit code 3. Every audit record is already fsynced, so
+                # there is nothing left to flush.
+                sys.stdout.flush()
+                os._exit(0)
 
     def _run_text(self) -> None:
         if sys.stdin is None:
@@ -300,14 +391,25 @@ class JarvisApp:
         print("\nGoodbye.")
 
     def _speak_turn(self, text: str) -> bool:
+        with self._agent_lock:
+            return self._speak_turn_locked(text)
+
+    def _speak_turn_locked(self, text: str) -> bool:
         """Run one brain turn and speak the reply. Returns False on shutdown."""
+        # "Allow once" covers this request, not one tool call inside it.
+        self.permissions.begin_turn()
         v = self.voice
         if text.lower().strip(" .!,") in _EXIT_PHRASES:
             v["speaker"].say("Shutting down. Goodbye.")
             return False
+        server = self.state_server
+        if server is not None:
+            server.publish_message("you", text)
         self._publish("thinking", text)
         reply = self.agent.run_turn(text)
         self._publish("speaking", reply)
+        if server is not None:
+            server.publish_message("jarvis", reply)
         print(f"Jarvis: {reply}")
         v["speaker"].say(reply)
         v["mic"].drain()
@@ -326,8 +428,19 @@ class JarvisApp:
                 # never take the whole assistant down.
                 try:
                     self._publish("idle")
-                    if not v["wake"].wait(should_stop=self._stop.is_set):
-                        return          # Quit pressed while waiting for the wake word
+                    # Wake word, Quit, or the page's talk button — whichever
+                    # comes first.
+                    woke = v["wake"].wait(
+                        should_stop=lambda: (self._stop.is_set()
+                                             or self._push_to_talk.is_set())
+                    )
+                    if not woke:
+                        if self._stop.is_set():
+                            return      # Quit pressed
+                        if not self._push_to_talk.is_set():
+                            return
+                        self._push_to_talk.clear()   # talk button: fall through
+                        v["mic"].drain()
                     self._publish("listening")
                     # The cue lands before recording so the user knows the
                     # microphone is open. Without it there was no way to tell

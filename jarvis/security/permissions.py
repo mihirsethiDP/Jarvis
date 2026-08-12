@@ -86,6 +86,16 @@ def classify_answer(answer: str) -> str:
     """
     if not answer:
         return "deny"          # silence is never consent
+    # Neutralise settled affirmative idioms before the deny scan, exactly as
+    # the confirmation gate does. Without this, "always allow, no need to ask
+    # again" and "sure, no problem" were recorded as DENIALS — and because
+    # they then looked like an explicit refusal, the second-chance re-ask was
+    # skipped too, so the user had no way to correct it.
+    from .confirm import _strip_idioms
+
+    answer = _strip_idioms(answer)
+    if not answer:
+        return "once"          # the whole answer was "no problem"
     if any(_has(answer, p) for p in _DENY):
         return "deny"
     if any(_has(answer, p) for p in _ALLOW_ALWAYS):
@@ -122,6 +132,11 @@ class PermissionManager:
         self.store_path = store_path or permissions_file()
         self.session_ttl = session_grant_minutes * 60
         self._session: dict[str, float] = {}  # capability -> expiry epoch
+        # "Allow once" means this request, not this single tool call. One
+        # ordinary request ("summarise the Q3 doc and mail it to Ranjana")
+        # calls Drive twice and Gmail once, and the user was interrogated at
+        # each step after already saying yes.
+        self._this_turn: set[str] = set()
         self._persistent: dict[str, dict] = self._load()
 
     # -- store ------------------------------------------------------------
@@ -162,7 +177,13 @@ class PermissionManager:
         os.replace(tmp, self.store_path)
 
     # -- API ---------------------------------------------------------------
+    def begin_turn(self) -> None:
+        """Start a new request; "allow once" grants expire here."""
+        self._this_turn.clear()
+
     def granted(self, capability: str) -> bool:
+        if capability in self._this_turn:
+            return True
         if self._persistent.get(capability, {}).get("scope") == "always":
             return True
         expiry = self._session.get(capability)
@@ -226,6 +247,7 @@ class PermissionManager:
             decision = "granted_session"
             allowed = True
         elif verdict == "once":
+            self._this_turn.add(capability)
             decision = "granted_once"
             allowed = True
         else:

@@ -131,3 +131,85 @@ def test_an_explicit_permission_denial_is_not_re_asked(audit, tmp_path):
     pm = PermissionManager(io, audit, store_path=tmp_path / "p.json")
     assert pm.require("memory_recall", "use what it remembered") is False
     assert len(io.asked) == 1
+
+
+# -- a qualified yes is a correction, not consent ------------------------
+# Found by the guardrail audit: _is_yes inspected only the first word or two
+# and discarded the rest, so "yes, but send it to Priya instead" confirmed
+# the ORIGINAL action — the wrong colleague was emailed and Jarvis reported
+# success. The mirror case with a leading "no" was already blocked.
+
+@pytest.mark.parametrize("answer", [
+    "yes, but send it to Priya instead",
+    "sure, but change the time to 4pm",
+    "ok but remove the attachment",
+    "fine, use my personal address",
+    "proceed with 4pm instead",
+    "haan lekin 4 baje",
+    "send it to Priya instead",
+    "correct the subject line first",
+    "yes but make it tomorrow",
+])
+def test_a_qualified_yes_never_confirms_the_uncorrected_action(answer):
+    assert _is_yes(normalize_answer(answer)) is False, (
+        f"{answer!r} confirmed the action it was correcting"
+    )
+
+
+@pytest.mark.parametrize("answer", [
+    "yes", "yes please", "ok great", "yes thanks", "yes that is right",
+    "sure go ahead", "okay so send it", "haan bhej do", "no problem",
+])
+def test_plain_agreement_still_confirms(answer):
+    assert _is_yes(normalize_answer(answer)) is True
+
+
+def test_the_correction_reaches_the_model(audit):
+    from conftest import FakeIO
+    from jarvis.security.confirm import Confirmer
+    from jarvis.tools import cancelled_by_user
+
+    io = FakeIO(["yes, but send it to Priya instead"])
+    result = Confirmer(io, audit).confirm("send_email", "I will email Mohit.")
+    assert not result
+    assert len(io.asked) == 1, "a clearly-heard correction must not be re-asked"
+    relayed = cancelled_by_user(result, "sending that email")
+    assert "Priya" in relayed and "correction" in relayed
+
+
+@pytest.mark.parametrize("answer,expected", [
+    ("sure, no problem", "once"),
+    ("yes, no worries", "once"),
+    ("allow once, no issues", "once"),
+    ("haan, koi baat nahi", "once"),
+    ("allow for this session, no problem", "session"),
+])
+def test_grants_containing_an_everyday_idiom_are_not_denials(answer, expected):
+    # The idiom fix existed only in the confirmation gate, so these natural
+    # answers to a permission question were recorded as refusals.
+    assert c(answer) == expected
+
+
+def test_no_need_is_deliberately_not_treated_as_agreement():
+    # Tempting to add, because "always allow, no need to ask again" is a
+    # grant — but "no need to send it" is a refusal, and mis-reading that as
+    # consent sends mail nobody approved. It stays failing closed.
+    assert _is_yes(normalize_answer("no need to send it")) is False
+
+
+def test_allow_once_covers_the_whole_request(audit, tmp_path):
+    # One request calls several tools. "Allow once" set no state at all, so
+    # the user was interrogated at every step after already saying yes.
+    from conftest import FakeIO
+    from jarvis.security.permissions import PermissionManager
+
+    io = FakeIO(["allow once"])
+    pm = PermissionManager(io, audit, store_path=tmp_path / "p.json")
+    pm.begin_turn()
+    assert all(pm.require("drive_read", "search Drive") for _ in range(3))
+    assert len(io.asked) == 1
+
+    # ...but it does not leak into the next request.
+    pm.begin_turn()
+    io.answers = ["no"]
+    assert pm.require("drive_read", "search Drive") is False

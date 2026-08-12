@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     voi = sub.add_parser("voices", help="Hear the Indian voices and pick one")
     voi.add_argument("--only", default=None, help="Audition a single voice by name")
 
+    sub.add_parser("wake-words", help="List the wake phrases you can choose from")
+
     wk = sub.add_parser("wake-test",
                         help="Measure what your voice scores against the wake word")
     wk.add_argument("--threshold", type=float, default=None,
@@ -182,6 +184,12 @@ def main(argv: list[str] | None = None) -> int:
         from .audio.voices import audition
 
         return audition(args.only)
+
+    if args.cmd == "wake-words":
+        from .audio.wakewords import describe
+
+        print(describe(str(config.get("audio.wake.model", "hey_jarvis"))))
+        return 0
 
     if args.cmd == "wake-test":
         from .audio.waketest import run

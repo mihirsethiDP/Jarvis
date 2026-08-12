@@ -73,6 +73,44 @@
           font: inherit; font-size: .77rem; letter-spacing: .04em; transition: .2s; }
   .quit:hover { border-color: var(--warn); color: var(--warn); }
   .quit:disabled { opacity: .5; cursor: default; }
+
+  /* -- talking to it -- */
+  .composer { border-top: 1px solid var(--line); padding: .8rem .9rem; }
+  .chat { max-height: 34vh; overflow-y: auto; display: flex; flex-direction: column;
+          gap: .5rem; padding: 0 .2rem .7rem; }
+  .msg { font-size: .86rem; line-height: 1.5; padding: .5rem .7rem; border-radius: 10px;
+         max-width: 92%; white-space: pre-wrap; word-break: break-word; }
+  .msg.you { align-self: flex-end; background: #17233d; color: var(--ink); }
+  .msg.jarvis { align-self: flex-start; background: #0c1526; color: var(--ink); }
+  .row2 { display: flex; gap: .5rem; align-items: flex-end; }
+  #say { flex: 1; resize: none; min-height: 2.4rem; max-height: 7rem; padding: .55rem .7rem;
+         border-radius: 9px; border: 1px solid var(--line); background: #060b16;
+         color: var(--ink); font: inherit; font-size: .87rem; }
+  #say:focus { outline: none; border-color: #2b3d63; }
+  .btn { border-radius: 9px; border: 1px solid var(--line); background: transparent;
+         color: var(--dim); font: inherit; font-size: .8rem; padding: .55rem .8rem;
+         cursor: pointer; transition: .18s; white-space: nowrap; }
+  .btn:hover:not(:disabled) { border-color: #35507f; color: var(--ink); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.talk.on { border-color: var(--good); color: var(--good); }
+  .hint { font-size: .68rem; color: var(--dim); margin-top: .45rem; letter-spacing: .02em; }
+
+  /* -- a question waiting on an answer -- */
+  .ask { margin: 0 .9rem .7rem; padding: .7rem .8rem; border-radius: 10px;
+         border: 1px solid #3a4a20; background: #141a0c; }
+  .ask p { font-size: .84rem; line-height: 1.5; margin-bottom: .6rem; }
+  .ask .row2 { gap: .45rem; }
+  .ask .btn.yes { border-color: var(--good); color: var(--good); }
+  .ask .btn.no { border-color: var(--warn); color: var(--warn); }
+
+  /* -- thinking loader -- */
+  .dots { display: inline-flex; gap: .22rem; vertical-align: middle; margin-left: .4rem; }
+  .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor;
+            animation: bob 1.1s infinite ease-in-out; }
+  .dots i:nth-child(2) { animation-delay: .16s; }
+  .dots i:nth-child(3) { animation-delay: .32s; }
+  @keyframes bob { 0%,80%,100% { opacity:.25; transform: translateY(0); }
+                   40% { opacity:1; transform: translateY(-3px); } }
 </style>
 </head>
 <body>
@@ -91,6 +129,24 @@
       <span class="live" id="live"><i></i><span id="livetext">live</span></span>
     </header>
     <div id="feed"><div class="empty">Nothing yet.<br>Everything Jarvis does appears here as it happens.</div></div>
+    <div class="ask" id="ask" hidden>
+      <p id="askText"></p>
+      <div class="row2">
+        <button class="btn yes" id="askYes">Yes</button>
+        <button class="btn no" id="askNo">No</button>
+      </div>
+    </div>
+
+    <div class="composer" id="composer" hidden>
+      <div class="chat" id="chat"></div>
+      <div class="row2">
+        <textarea id="say" rows="1" placeholder="Type what you need — Enter to send"></textarea>
+        <button class="btn talk" id="talk" title="Speak without the wake word">Talk</button>
+        <button class="btn" id="send">Send</button>
+      </div>
+      <div class="hint" id="hint">Enter sends &middot; Shift+Enter for a new line</div>
+    </div>
+
     <div class="note" id="note">127.0.0.1 only &middot; never leaves this machine</div>
     <button id="quit" class="quit" hidden>Quit Jarvis</button>
   </section>
@@ -359,7 +415,106 @@ function addActivity(a, atEnd) {
 const LOCAL = location.protocol === "http:"
   && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
 
+/* ── talking to it: typed requests, push-to-talk, answering ── */
+const chatEl = document.getElementById("chat");
+const sayEl = document.getElementById("say");
+const sendBtn = document.getElementById("send");
+const talkBtn = document.getElementById("talk");
+const askEl = document.getElementById("ask");
+const askTextEl = document.getElementById("askText");
+const hintEl = document.getElementById("hint");
+
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + (role === "you" ? "you" : "jarvis");
+  div.textContent = text;              // never markup: this is model output
+  chatEl.append(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+
+let thinkingEl = null;
+function showThinking(on) {
+  if (on && !thinkingEl) {
+    thinkingEl = addMessage("jarvis", "");
+    thinkingEl.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
+  } else if (!on && thinkingEl) {
+    thinkingEl.remove();
+    thinkingEl = null;
+  }
+}
+
+function showPrompt(prompt) {
+  // A permission or confirmation question routed here because the request
+  // was typed — someone who typed may not be able to answer out loud.
+  askEl.hidden = !prompt;
+  askTextEl.textContent = prompt || "";
+  if (prompt) chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function post(path, body) {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    return r.ok ? null : (await r.json().catch(() => ({}))).error || "failed";
+  } catch (e) {
+    return "no connection";
+  }
+}
+
+async function send() {
+  const text = sayEl.value.trim();
+  if (!text) return;
+  sayEl.value = "";
+  sayEl.style.height = "auto";
+  sendBtn.disabled = true;
+  showThinking(true);
+  const err = await post("/ask", { text });
+  sendBtn.disabled = false;
+  if (err) {
+    showThinking(false);
+    hintEl.textContent = err === "busy"
+      ? "Jarvis is mid-task — wait for it to finish, then try again."
+      : "Couldn't send that: " + err;
+    setTimeout(() => { hintEl.textContent = "Enter sends · Shift+Enter for a new line"; }, 4000);
+  }
+}
+
+if (sayEl) {
+  sayEl.addEventListener("input", () => {
+    sayEl.style.height = "auto";
+    sayEl.style.height = Math.min(sayEl.scrollHeight, 112) + "px";
+  });
+  sayEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  sendBtn.addEventListener("click", send);
+  talkBtn.addEventListener("click", async () => {
+    // Push-to-talk: record one utterance with no wake word, for anyone the
+    // wake word does not reliably hear.
+    talkBtn.classList.add("on");
+    const err = await post("/listen", {});
+    if (err) {
+      talkBtn.classList.remove("on");
+      hintEl.textContent = err === "voice unavailable"
+        ? "Voice isn't running — start Jarvis with the microphone enabled."
+        : "Couldn't start listening: " + err;
+      setTimeout(() => { hintEl.textContent = "Enter sends · Shift+Enter for a new line"; }, 4000);
+    }
+  });
+  document.getElementById("askYes").addEventListener("click", async () => {
+    showPrompt(""); await post("/answer", { answer: "yes" });
+  });
+  document.getElementById("askNo").addEventListener("click", async () => {
+    showPrompt(""); await post("/answer", { answer: "no" });
+  });
+}
+
 if (LOCAL) {
+  document.getElementById("composer").hidden = false;
   // Launched from the desktop shortcut there is no terminal to Ctrl+C, so
   // the page has to be able to stop the assistant.
   const quitBtn = document.getElementById("quit");
@@ -381,10 +536,22 @@ if (LOCAL) {
       if (m.type === "snapshot") {
         applyState(m.state || {});
         (m.activity || []).forEach(a => addActivity(a, true));
+        chatEl.textContent = "";
+        (m.transcript || []).forEach(t => addMessage(t.role, t.text));
+        showPrompt(m.prompt || "");
       } else if (m.type === "activity") {
         addActivity(m, false);
+      } else if (m.type === "message") {
+        showThinking(false);
+        addMessage(m.role, m.text);
+        if (m.role === "you") showThinking(true);
+      } else if (m.type === "prompt") {
+        showPrompt(m.prompt || "");
       } else {
         applyState(m);
+        // The loader belongs to work in progress, not to idling.
+        if (["idle", "offline"].includes(m.state)) showThinking(false);
+        talkBtn.classList.toggle("on", m.state === "listening");
       }
     };
     ws.onclose = () => {
