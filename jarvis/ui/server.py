@@ -21,7 +21,8 @@ _STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 
 class StateServer:
     def __init__(self, port: int = 8763, on_quit=None,
-                 on_ask=None, on_listen=None, on_answer=None):
+                 on_ask=None, on_listen=None, on_answer=None,
+                 wake_phrase: str = "Hey Jarvis"):
         # Hard-coded loopback — the page shows live conversation content, so a
         # LAN-reachable bind is never acceptable regardless of config.
         self.host = "127.0.0.1"
@@ -32,6 +33,7 @@ class StateServer:
         self.on_ask = on_ask
         self.on_listen = on_listen
         self.on_answer = on_answer
+        self.wake_phrase = wake_phrase
         self._state = {"state": "starting", "detail": ""}
         # Rolling record of what Jarvis actually did, so the employee can
         # watch each step rather than trusting a summary after the fact.
@@ -134,6 +136,7 @@ class StateServer:
                     "activity": list(self._activity),
                     "transcript": list(self._transcript),
                     "prompt": self._pending_prompt,
+                    "wake_phrase": self.wake_phrase,
                 })
                 while True:
                     await websocket.receive_text()  # keepalive; content ignored

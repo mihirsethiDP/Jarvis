@@ -27,7 +27,7 @@ _STATE_STYLE = {
     "starting":     ("Starting…",    "#8a94a6", True),
     "idle":         ("Say “Hey Jarvis”", "#38bdf8", False),
     "listening":    ("Listening…",   "#22d3ee", False),
-    "transcribing": ("Getting that…", "#a78bfa", True),
+    "transcribing": ("Heard you — writing it down", "#a78bfa", True),
     "thinking":     ("Working…",     "#fbbf24", True),
     "working":      ("Working…",     "#fbbf24", True),
     "speaking":     ("Speaking",     "#34d399", False),
@@ -41,7 +41,10 @@ _MARGIN = 24
 class Overlay:
     """Runs a Tk window on its own thread; updates arrive through a queue."""
 
-    def __init__(self, port: int = 8763, on_listen=None):
+    def __init__(self, port: int = 8763, on_listen=None, wake_phrase: str = "Hey Jarvis"):
+        # The idle label must follow the configured wake word — telling the
+        # user to say "Hey Jarvis" while Jarvis listens for "Alexa" is a trap.
+        _STATE_STYLE["idle"] = (f"Say “{wake_phrase}”", "#38bdf8", False)
         self._q: queue.Queue = queue.Queue()
         self._port = port
         self._on_listen = on_listen

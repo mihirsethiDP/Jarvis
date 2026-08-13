@@ -67,8 +67,11 @@ class JarvisApp:
 
                 # Loopback only, by design — the page shows live conversation
                 # state and must never be reachable from the LAN.
+                from .audio.wakewords import spoken_phrase as _phrase
+
                 self.state_server = StateServer(
                     port=int(config.get("ui.port", 8763)),
+                    wake_phrase=_phrase(str(config.get("audio.wake.model", "hey_jarvis"))),
                     on_quit=self._quit_from_ui,
                     on_ask=self._ask_from_ui,
                     on_listen=self._listen_from_ui,
@@ -83,10 +86,13 @@ class JarvisApp:
                 # all day, so without this Jarvis is invisible for most of the
                 # day it is meant to be running.
                 if config.get("ui.overlay", True):
+                    from .audio.wakewords import spoken_phrase
                     from .ui.overlay import Overlay
 
                     overlay = Overlay(port=int(config.get("ui.port", 8763)),
-                                      on_listen=self._listen_from_ui)
+                                      on_listen=self._listen_from_ui,
+                                      wake_phrase=spoken_phrase(
+                                          str(config.get("audio.wake.model", "hey_jarvis"))))
                     self.overlay = overlay if overlay.start() else None
             except ImportError:
                 print("UI dependencies missing — run `pip install .[ui]`. Continuing without UI.")
@@ -230,16 +236,17 @@ class JarvisApp:
         Without this the accent silently switches to US English mid-session
         and looks like a broken setting rather than a network problem.
         """
-        if self.state_server is None:
-            return
-        self.state_server.record_activity({
-            "ts": datetime.now().isoformat(),
-            "event": "voice",
-            "tool": "Indian voice" if engine == "edge" else "offline voice (US English)",
-            "detail": reason,
-            "decision": "restored" if engine == "edge" else "degraded",
-            "ok": engine == "edge",
-        })
+        # Through the audit log rather than straight to the page: the feed
+        # gets it via the subscription either way, and it persists — so "it
+        # sounded robotic earlier" is answerable after the fact instead of
+        # being lost when the page closes.
+        self.audit.record(
+            "voice",
+            tool="Indian voice" if engine == "edge" else "offline voice (US English)",
+            detail=reason,
+            decision="restored" if engine == "edge" else "degraded",
+            ok=engine == "edge",
+        )
 
     def _try_build_voice(self):
         try:
@@ -280,6 +287,8 @@ class JarvisApp:
                 model_size=str(cfg.get("audio.stt.model_size", "base.en")),
                 compute_type=str(cfg.get("audio.stt.compute_type", "int8")),
                 language=str(cfg.get("audio.stt.language", "en")),
+                expected_languages=tuple(
+                    cfg.get("audio.stt.expected_languages", ["en", "hi"]) or ["en", "hi"]),
             )
             offline_speaker = Speaker(
                 voice=cfg.get("audio.tts.voice"),
@@ -448,8 +457,12 @@ class JarvisApp:
                     chime.play("listening")
                     print("(wake word detected — listening…)")
                     audio = v["recorder"].record()
-                    self._publish("transcribing")
+                    # The "done" tone plus a live caption ("heard 6s — writing
+                    # it down") is the cue that the mic has closed and work
+                    # has started; without it this stretch reads as dead.
                     chime.play("done")
+                    self._publish("transcribing",
+                                  f"heard {len(audio) / 16000:.0f}s — writing it down")
                     text = v["stt"].transcribe(audio)
                     if not text:
                         v["speaker"].say("Sorry, I didn't catch that.")
@@ -465,6 +478,11 @@ class JarvisApp:
                         audio = v["recorder"].record(start_window=follow_secs)
                         if audio.size == 0:
                             break  # genuine silence — back to the wake word
+                        chime.play("done")
+                        # The follow-up path never published this state, so
+                        # the pill sat on "listening" while transcription ran.
+                        self._publish("transcribing",
+                                      f"heard {len(audio) / 16000:.0f}s — writing it down")
                         followup = v["stt"].transcribe(audio)
                         if not followup:
                             # Speech was captured but could not be transcribed.

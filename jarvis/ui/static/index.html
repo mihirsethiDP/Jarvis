@@ -163,7 +163,7 @@ const STATES = {
   starting:     { label: "starting",     hue: 210, sat: 8,  spin: 0.25, energy: 0.18, pulse: 0.0 },
   idle:         { label: "hey jarvis",   hue: 200, sat: 45, spin: 0.45, energy: 0.30, pulse: 0.0 },
   listening:    { label: "listening",    hue: 186, sat: 72, spin: 1.30, energy: 1.00, pulse: 0.0 },
-  transcribing: { label: "transcribing", hue: 265, sat: 60, spin: 1.70, energy: 0.72, pulse: 0.0 },
+  transcribing: { label: "heard you — writing it down", hue: 265, sat: 60, spin: 1.70, energy: 0.72, pulse: 0.0 },
   thinking:     { label: "working",      hue: 40,  sat: 78, spin: 2.40, energy: 0.62, pulse: 0.0 },
   // Published while a tool runs. Without it the HUD fell back to "idle"
   // during the longest part of a turn and looked like it had stopped.
@@ -534,6 +534,7 @@ if (LOCAL) {
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.type === "snapshot") {
+        if (m.wake_phrase) STATES.idle.label = 'say “' + m.wake_phrase + '”';
         applyState(m.state || {});
         (m.activity || []).forEach(a => addActivity(a, true));
         chatEl.textContent = "";

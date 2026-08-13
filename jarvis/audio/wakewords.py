@@ -36,6 +36,18 @@ NOT_WAKE_WORDS = {
 }
 
 
+def spoken_phrase(model_name: str) -> str:
+    """What the user actually says for a given model, for UI labels."""
+    for name, spoken, _ in WAKE_WORDS:
+        if name == model_name:
+            return spoken
+    # A custom-trained model ("hey_dp.onnx" path or name): derive a readable
+    # phrase rather than showing a filename.
+    stem = model_name.replace("\\", "/").rsplit("/", 1)[-1]
+    stem = stem.removesuffix(".onnx").removesuffix("_v0.1")
+    return stem.replace("_", " ").title() or "Hey Jarvis"
+
+
 def available() -> list[str]:
     return [name for name, _, _ in WAKE_WORDS]
 
