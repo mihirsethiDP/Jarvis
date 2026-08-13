@@ -26,6 +26,7 @@ import json
 import os
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -226,7 +227,22 @@ class AuditLog:
         return intact, count
 
     def verify(self) -> tuple[bool, int, str, int]:
-        """Verify the chain and report *how* it failed.
+        """Verify the chain, re-checking once before reporting a failure.
+
+        Verification can run while the assistant is mid-append — the anchor
+        and the file are read at slightly different moments, and the gap
+        between them reads as truncation or a replaced file. A real problem
+        is still there on the second look; a race is not. A tamper alarm that
+        cries wolf teaches people to ignore the one that matters.
+        """
+        result = self._verify_once()
+        if result[0]:
+            return result
+        time.sleep(0.25)
+        return self._verify_once()
+
+    def _verify_once(self) -> tuple[bool, int, str, int]:
+        """One verification pass; see `verify` for the failure vocabulary.
 
         Returns (intact, entries_checked, reason, missing). The reason matters
         because the failures are not equally alarming:
