@@ -414,16 +414,22 @@ def build_tools(ctx: ToolContext) -> list:
                 "mark_read, mark_unread, add_label, remove_label."
             )
 
-        # Read back what the email actually IS. "(id 197f3a2b9c8d1e4f)" is
-        # unverifiable by ear, so the user was consenting to trash something
-        # they could not identify — a confirmation nobody can check is not a
-        # confirmation.
-        result = ctx.confirmer.confirm(
-            "organize_email", f"I will {summary}: {_describe_message(message_id)}.",
-            audit_detail=f"{action} label={label} id={message_id}",
-        )
-        if not result:
-            return cancelled_by_user(result, "that mailbox change")
+        # Archive, labels and read/unread are one-click reversible in Gmail —
+        # a spoken confirmation there costs ten seconds to prevent nothing.
+        # Trash is the one that moves mail out of sight, so it still asks,
+        # reading back what the email actually IS: "(id 197f3a2b...)" is
+        # unverifiable by ear.
+        if action in ("trash", "untrash"):
+            result = ctx.confirmer.confirm(
+                "organize_email", f"I will {summary}: {_describe_message(message_id)}.",
+                audit_detail=f"{action} label={label} id={message_id}",
+            )
+            if not result:
+                return cancelled_by_user(result, "that mailbox change")
+        else:
+            ctx.audit.record("confirmation", tool="organize_email",
+                             detail=f"{action} label={label} id={message_id}",
+                             decision="auto_reversible", ok=True)
 
         try:
             gmail = _gmail().users().messages()

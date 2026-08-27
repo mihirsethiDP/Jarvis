@@ -60,6 +60,10 @@ class SwitchableIO:
     def ask(self, prompt: str) -> str:
         return self.current.ask(prompt)
 
+    def ask_short(self, prompt: str) -> str:
+        short = getattr(self.current, "ask_short", None)
+        return short(prompt) if short else self.current.ask(prompt)
+
 
 class WebIO:
     """Asks through the status page and blocks until the page answers.
@@ -80,6 +84,9 @@ class WebIO:
 
     def say(self, text: str) -> None:
         self._say(text)
+
+    def ask_short(self, prompt: str) -> str:
+        return self.ask(prompt)
 
     def ask(self, prompt: str) -> str:
         self._answer = ""
@@ -104,9 +111,13 @@ class VoiceIO:
     stays import-safe on machines without audio dependencies installed.
     """
 
-    def __init__(self, speak: Callable[[str], None], listen: Callable[[], str]):
+    def __init__(self, speak: Callable[[str], None], listen: Callable[[], str],
+                 listen_short: Callable[[], str] | None = None):
         self._speak = speak
         self._listen = listen
+        # A cheaper listener for one-word answers; a confirmation should not
+        # pay the full multilingual pipeline to understand "haan".
+        self._listen_short = listen_short or listen
 
     def say(self, text: str) -> None:
         print(f"\nJarvis: {text}")
@@ -115,5 +126,11 @@ class VoiceIO:
     def ask(self, prompt: str) -> str:
         self.say(prompt)
         heard = self._listen()
+        print(f"You: {heard}")
+        return heard
+
+    def ask_short(self, prompt: str) -> str:
+        self.say(prompt)
+        heard = self._listen_short()
         print(f"You: {heard}")
         return heard

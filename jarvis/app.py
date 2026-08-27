@@ -16,6 +16,7 @@ from .paths import cli_hint
 from .security import AuditLog, Confirmer, PermissionManager
 from .security.limits import ActionLimiter
 from .security import secrets as secret_store
+from . import tools as tools_pkg
 from .tools import ToolContext, build_all_tools
 from .usage import TurnBudget
 
@@ -116,12 +117,16 @@ class JarvisApp:
             io, self.audit, session_grant_minutes=config.session_grant_minutes,
             on_status=self._publish,
         )
-        # Side-effect confirmation is always on — deliberately not configurable,
-        # so no config edit (or prompt-injected "helpful suggestion") can
-        # disable the human-in-the-loop gate.
-        # Blast-radius caps: even a confirmed action can't run away.
-        self.confirmer = Confirmer(io, self.audit, limiter=ActionLimiter(),
-                                   on_status=self._publish)
+        # Side-effect confirmation cannot be switched OFF — "smart" mode only
+        # lets a tool vouch for a specific low-blast-radius action (internal
+        # chat DM, confidently resolved), and even then never in a turn that
+        # read untrusted content. Blast-radius caps: even a confirmed action
+        # can't run away.
+        self.confirmer = Confirmer(
+            io, self.audit, limiter=ActionLimiter(), on_status=self._publish,
+            mode=str(config.get("security.confirm_mode", "always")),
+            untrusted_check=tools_pkg.turn_saw_untrusted,
+        )
         self.memory = MemoryStore()
         limit = int(config.get("brain.daily_turn_limit", 200))
         self.turn_budget = TurnBudget(limit) if limit > 0 else None
@@ -191,6 +196,7 @@ class JarvisApp:
             # cannot speak, so asking them out loud would strand the request.
             self.io.use(self._web_io)
             self.permissions.begin_turn()
+            tools_pkg.begin_turn()
             try:
                 reply = self.agent.run_turn(text)
             except Exception as e:
@@ -326,11 +332,26 @@ class JarvisApp:
             audio = v["recorder"].record()
             return v["stt"].transcribe(audio)
 
+        def listen_short() -> str:
+            from .security.confirm import _NO_WORDS, _is_yes
+            from .security.permissions import normalize_answer
+
+            def clear_answer(text: str) -> bool:
+                normalized = normalize_answer(text)
+                return _is_yes(normalized) or any(
+                    w in _NO_WORDS for w in normalized.split())
+
+            v["mic"].drain()
+            audio = v["recorder"].record(start_window=8)
+            # Tiny-model decodes are used only when they parse as a clear yes
+            # or no; anything else re-decodes on the accurate pipeline.
+            return v["stt"].transcribe_quick(audio, recognizer=clear_answer)
+
         def speak(text: str) -> None:
             v["speaker"].say(text)
             v["mic"].drain()
 
-        return VoiceIO(speak=speak, listen=listen)
+        return VoiceIO(speak=speak, listen=listen, listen_short=listen_short)
 
     # ------------------------------------------------------------------
     def run(self) -> None:
@@ -407,6 +428,7 @@ class JarvisApp:
         """Run one brain turn and speak the reply. Returns False on shutdown."""
         # "Allow once" covers this request, not one tool call inside it.
         self.permissions.begin_turn()
+        tools_pkg.begin_turn()
         v = self.voice
         if text.lower().strip(" .!,") in _EXIT_PHRASES:
             v["speaker"].say("Shutting down. Goodbye.")

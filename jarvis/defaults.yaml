@@ -149,8 +149,16 @@ ai_tools: []
 internal_tools: []
 
 security:
-  # Note: side-effect confirmation (spoken summary + explicit "yes") is always
-  # on and deliberately has no config switch.
+  # How side effects are confirmed. Confirmation can never be switched off:
+  #   always - every side effect waits for a spoken yes (the default).
+  #   smart  - low-blast-radius actions a tool explicitly vouches for (a chat
+  #            DM to a confidently-resolved colleague on your own domain) are
+  #            announced and performed without waiting. Never applies in a
+  #            turn that read a document, email, chat history, or web page -
+  #            that content is the prompt-injection vector the confirmation
+  #            gate exists to stop. External email, calendar changes, file
+  #            writes, code, and trash always confirm, in both modes.
+  confirm_mode: always
   # "Allow for this session" grants expire after this many minutes.
   session_grant_minutes: 480
 

@@ -220,7 +220,8 @@ class PermissionManager:
 
         try:
             self.on_status("listening", f"waiting for permission — {description}")
-            answer = normalize_answer(self.io.ask(
+            ask = getattr(self.io, "ask_short", self.io.ask)
+            answer = normalize_answer(ask(
                 f"I need permission to {description}. "
                 'Say "allow once", "allow for this session", "always allow", or "deny".'
             ))
@@ -230,7 +231,7 @@ class PermissionManager:
             # An unintelligible answer gets a second try; a clear "deny" does
             # not, and two unclear answers still fail closed.
             if _is_unclear_grant(answer):
-                answer = normalize_answer(self.io.ask(
+                answer = normalize_answer(ask(
                     "Sorry, I didn't catch that. Say allow or deny."
                 ))
         except EOFError:

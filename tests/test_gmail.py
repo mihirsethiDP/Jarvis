@@ -149,15 +149,17 @@ def test_organize_archive_removes_inbox_label(tmp_path, audit):
     )
 
 
-def test_organize_mark_unread_also_requires_confirmation(tmp_path, audit):
-    # Deliberate design choice: even the highest-frequency, fully-reversible
-    # organize action (mark read/unread) is confirmed, no special-casing.
+def test_organize_mark_read_is_reversible_so_it_does_not_ask(tmp_path, audit):
+    # Design changed on user feedback: confirmations are priced by blast
+    # radius, and mark-read is one-click reversible. Only the permission
+    # question (a capability gate, "allow once") is asked — no confirmation.
     service = MagicMock()
-    ctx = make_ctx(tmp_path, audit, ["allow once", "no"], service)
+    ctx = make_ctx(tmp_path, audit, ["allow once"], service)
     tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
     out = tools["organize_email"]("m1", "mark_read")
-    assert "Cancelled" in out
-    service.users().messages().modify.assert_not_called()
+    assert "Cancelled" not in out
+    service.users().messages().modify.assert_called_once()
+    assert not any("Please confirm" in q for q in ctx.confirmer.io.asked)
 
 
 def test_organize_custom_label_resolves_id_and_caches(tmp_path, audit):
@@ -323,11 +325,40 @@ def test_trash_confirmation_names_the_email_not_its_id(tmp_path, audit):
 
 def test_a_failed_lookup_still_lets_the_action_proceed(tmp_path, audit):
     # A metadata fetch that fails must degrade to the id, never block the
-    # action the user asked for.
+    # action the user asked for. (Trash, because it is the organize action
+    # that still confirms — archive no longer asks at all.)
     service = MagicMock()
     service.users().messages().get.return_value.execute.side_effect = RuntimeError("boom")
     ctx = make_ctx(tmp_path, audit, ["allow once", "yes"], service)
     tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
-    out = tools["organize_email"]("abc123", "archive")
+    out = tools["organize_email"]("abc123", "trash")
     assert "Cancelled" not in out
     assert "abc123" in " ".join(ctx.confirmer.io.asked)
+
+
+def test_reversible_mailbox_ops_do_not_ask(tmp_path, audit):
+    # Archive/label/mark are one-click reversible in Gmail; a spoken
+    # confirmation there costs ten seconds to prevent nothing.
+    service = MagicMock()
+    ctx = make_ctx(tmp_path, audit, ["allow once"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["organize_email"]("m1", "archive")
+    assert "Cancelled" not in out
+    assert not any("Please confirm" in q for q in ctx.confirmer.io.asked), (
+        "archive must not require confirmation")
+
+
+def test_trash_still_asks(tmp_path, audit):
+    service = MagicMock()
+    service.users().messages().get.return_value.execute.return_value = {
+        "payload": {"headers": [
+            {"name": "From", "value": "Ranjana <r@digitalpaani.com>"},
+            {"name": "Subject", "value": "Q3 report"},
+        ]}
+    }
+    ctx = make_ctx(tmp_path, audit, ["allow once", "no"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    out = tools["organize_email"]("m1", "trash")
+    assert "Cancelled" in out
+    assert any("Please confirm" in q for q in ctx.confirmer.io.asked), (
+        "trash moves mail out of sight — it asks")

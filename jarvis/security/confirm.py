@@ -35,12 +35,18 @@ _YES = {"yes", "confirm", "confirmed", "do it", "go ahead", "send it", "yep", "y
         # so only unambiguous affirmatives belong here.
         "haan", "haanji", "ji haan", "theek hai", "thik hai", "kar do", "bhej do",
         "bilkul", "han", "haa", "kar dijiye", "bhej dijiye", "theek", "thik",
+        # STT drops aspiration on bh/kh routinely — "भेज दो" comes out
+        # "बेज दो", "bhej do" comes out "bej do". Same word, same consent.
+        "bej do", "बेज दो", "bej dijiye", "kardo", "bhejdo", "bejdo",
         "हाँ", "हां", "जी हाँ", "ठीक है", "कर दो", "भेज दो", "बिल्कुल"}
 
 # Speech starts with noise: "um, yes", "okay so send it", "actually yes".
 # Stripped before matching so the affirmative underneath is still found.
 _LEADING_FILLERS = ("um", "umm", "uh", "er", "hmm", "so", "well", "actually",
-                    "please", "just", "haan to", "to")
+                    "please", "just", "haan to", "to",
+                    # Devanagari hesitations, and what STT hears a quick "हाँ"
+                    # as. "अ, बेज दो" must parse as the send it is.
+                    "अ", "आ", "तो", "अच्छा", "acha", "accha", "arey", "अरे")
 
 # Affirmative phrases that happen to contain a deny word. Neutralised before
 # the deny scan, so "no problem" stops cancelling the action it agrees to.
@@ -155,7 +161,8 @@ class ConfirmResult:
 
 class Confirmer:
     def __init__(self, io: IOChannel, audit: AuditLog, *, enabled: bool = True,
-                 limiter=None, on_status=None):
+                 limiter=None, on_status=None, mode: str = "always",
+                 untrusted_check=None):
         self.io = io
         self.audit = audit
         self.enabled = enabled
@@ -166,8 +173,18 @@ class Confirmer:
         # Every side effect funnels through confirm(), so the blast-radius
         # cap lives here and covers all of them at once.
         self.limiter = limiter
+        # "always": every side effect waits for a spoken yes.
+        # "smart":  an action a tool marks auto_ok (low blast radius, target
+        #           resolved with confidence) is announced and performed
+        #           without waiting — UNLESS untrusted content (a document,
+        #           email, chat message, web page) was read earlier in the
+        #           turn. That content is the prompt-injection vector, and it
+        #           is precisely what the confirmation gate exists to stop.
+        self.mode = mode if mode in ("always", "smart") else "always"
+        self._untrusted_check = untrusted_check or (lambda: False)
 
-    def confirm(self, action: str, summary: str, *, audit_detail: str | None = None) -> ConfirmResult:
+    def confirm(self, action: str, summary: str, *, audit_detail: str | None = None,
+                auto_ok: bool = False, announce: str = "") -> ConfirmResult:
         """Read the action back to the user; only an explicit yes proceeds.
 
         *summary* is spoken to the user and should be concrete (it may quote
@@ -195,9 +212,24 @@ class Confirmer:
                               decision="skipped_disabled", ok=True)
             return ConfirmResult(True)
 
+        # Smart mode: price the check by blast radius. The tool has vouched
+        # for this specific action (auto_ok), nothing untrusted has entered
+        # the turn, and the limiter had headroom above. Announce and proceed —
+        # the user hears what is happening and the follow-up window still
+        # catches a "ruko!". A confirmation that costs ten seconds to prevent
+        # an embarrassment, not a catastrophe, is priced wrong.
+        if auto_ok and self.mode == "smart" and not self._untrusted_check():
+            if self.limiter is not None:
+                self.limiter.record(action)
+            self.audit.record("confirmation", tool=action, detail=detail,
+                              decision="auto_smart", ok=True)
+            self.io.say(announce or summary)
+            return ConfirmResult(True)
+
         try:
             self.on_status("listening", f"waiting for your yes or no — {summary}")
-            raw = self.io.ask(
+            ask = getattr(self.io, "ask_short", self.io.ask)
+            raw = ask(
                 f"Please confirm — {summary} Say yes to proceed, or no to cancel."
             )
             # A mis-transcribed answer used to cancel outright, so the user
@@ -205,7 +237,7 @@ class Confirmer:
             # Ask once more — but only when the answer was unintelligible, not
             # when it was a clear refusal, and still fail closed after that.
             if _is_unclear(raw):
-                raw = self.io.ask(
+                raw = ask(
                     "Sorry, I didn't catch that. Say yes to go ahead, or no to cancel."
                 )
         except EOFError:

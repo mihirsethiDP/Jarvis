@@ -169,6 +169,36 @@ class Transcriber:
         confidence = sum(seg.avg_logprob for seg in segments) / len(segments)
         return text, confidence
 
+    def transcribe_quick(self, audio_f32_16k: np.ndarray, recognizer=None) -> str:
+        """Fast decode for short answers — a confirmation "yes"/"haan"/"no".
+
+        The full pipeline costs several seconds to understand one word, and a
+        confirmation round-trip pays that twice. The tiny model — already
+        loaded for language detection — decodes a short clip in around a
+        second. But it is only trustworthy when its output is *verifiable*:
+        measured, it turns "हाँ" into "Huh?" and "ठीक है" into "TK". So a tiny
+        decode is used only when *recognizer* accepts it as a clear answer;
+        anything unrecognized falls through to the accurate full pipeline.
+        Correct beats fast; fast only when provably safe.
+        """
+        if audio_f32_16k.size == 0:
+            return ""
+        if recognizer is not None and not self._detector_failed:
+            if self._detector is None:
+                self._detect_language(audio_f32_16k[:1600])  # force-load it
+            if self._detector is not None:
+                try:
+                    for lang in self._expected:
+                        segments, _info = self._detector.transcribe(
+                            audio_f32_16k, language=lang, **_DECODE
+                        )
+                        text = " ".join(s.text.strip() for s in segments).strip()
+                        if text and recognizer(text):
+                            return text
+                except Exception:
+                    pass
+        return self.transcribe(audio_f32_16k)
+
     def transcribe(self, audio_f32_16k: np.ndarray) -> str:
         if audio_f32_16k.size == 0:
             return ""

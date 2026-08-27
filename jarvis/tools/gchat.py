@@ -42,6 +42,9 @@ _MAX_LABELLED = 18       # DMs we name by reading a message (one call each)
 def build_tools(ctx: ToolContext) -> list:
     people_names: dict[str, str] = {}   # "users/123" -> "Priya Rao"
     space_labels: dict[str, str] = {}   # "spaces/abc" -> "Ranjana Majumdar (DM)"
+    # DMs resolved with confidence to a colleague on the user's own domain.
+    # Only these are eligible for smart-mode auto-send.
+    vouched_spaces: set[str] = set()
     me_cache: dict[str, str] = {}
 
     def _chat():
@@ -304,6 +307,10 @@ def build_tools(ctx: ToolContext) -> list:
 
         space_id = dm.get("name", "")
         space_labels[space_id] = f"{display} (direct message)"
+        person_mail = _directory.email(person).casefold()
+        own = _my_domain().casefold()
+        if confident and own and person_mail.endswith("@" + own):
+            vouched_spaces.add(space_id)
         ctx.audit.record("tool_call", tool="find_direct_message",
                          detail=f"{display} -> {space_id}")
         note = ""
@@ -448,6 +455,11 @@ def build_tools(ctx: ToolContext) -> list:
             "send_chat_message",
             f'I will send this to {recipient}: "{preview}".',
             audit_detail=f"space={space_id} to={recipient} chars={len(text)}",
+            # A DM to a confidently-resolved colleague is the lowest-stakes
+            # send Jarvis makes. In smart mode it goes without waiting — the
+            # announcement still says who and what.
+            auto_ok=space_id in vouched_spaces,
+            announce=f"Sending to {recipient}.",
         )
         if not result:
             return cancelled_by_user(result, f"sending that Chat message to {recipient}")

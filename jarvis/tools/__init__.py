@@ -67,6 +67,21 @@ DATA_BOUNDARY_NOTE = (
 
 _CLOSING_TAG = re.compile(r"</\s*document\s*>", re.IGNORECASE)
 
+# Whether untrusted content — a document, email body, chat history, web page —
+# has entered the CURRENT turn. Turns are serialized by the app's agent lock,
+# so one process-wide flag is sound. Smart-mode confirmation skipping consults
+# this: content from outside the user's own mouth is the prompt-injection
+# vector, and its presence re-arms the full confirmation gate.
+_TURN = {"untrusted": False}
+
+
+def begin_turn() -> None:
+    _TURN["untrusted"] = False
+
+
+def turn_saw_untrusted() -> bool:
+    return _TURN["untrusted"]
+
 
 def cancelled_by_user(result, action_phrase: str) -> str:
     """Standard tool result for a declined confirmation.
@@ -104,6 +119,7 @@ def as_document(source: str, content: str) -> str:
     attribute is escaped) so a poisoned document cannot break out of the
     envelope and pose as trusted tool output.
     """
+    _TURN["untrusted"] = True
     safe_source = html.escape(str(source), quote=True)
     safe_content = _CLOSING_TAG.sub("[/document]", content)
     return (
