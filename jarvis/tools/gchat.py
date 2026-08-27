@@ -30,6 +30,7 @@ from __future__ import annotations
 from anthropic import beta_tool
 
 from . import ToolContext, as_document, cancelled_by_user
+from . import directory as _directory
 
 _PAGE_SIZE = 100
 _MAX_PAGES = 10          # 1000 spaces; far past any real account
@@ -92,6 +93,24 @@ def build_tools(ctx: ToolContext) -> list:
                 if name:
                     people_names[original] = name
 
+    def _my_domain() -> str:
+        """The signed-in user's mail domain, cached.
+
+        Gmail's own profile is the source: people/me does not return email
+        addresses under the scopes Jarvis holds, so ranking colleagues above
+        external contacts silently never fired when this read from People.
+        """
+        if "domain" not in me_cache:
+            me_cache["domain"] = ""
+            try:
+                profile = ctx.google_service("gmail", "v1").users().getProfile(
+                    userId="me").execute()
+                address = profile.get("emailAddress", "")
+                me_cache["domain"] = address.rsplit("@", 1)[-1] if "@" in address else ""
+            except Exception:
+                pass
+        return me_cache["domain"]
+
     def _person_name(user_resource: str) -> str:
         """Resolve "users/123" to a display name via the directory, cached."""
         if not user_resource:
@@ -133,15 +152,6 @@ def build_tools(ctx: ToolContext) -> list:
 
     def _sender_label(sender: dict) -> str:
         return sender.get("displayName") or _person_name(sender.get("name") or "")
-
-    def _search_directory(name: str) -> list[dict]:
-        resp = _people().people().searchDirectoryPeople(
-            query=name,
-            readMask="names,emailAddresses",
-            sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
-            pageSize=20,
-        ).execute()
-        return resp.get("people", [])
 
     def _describe(person: dict) -> str:
         display = (person.get("names") or [{}])[0].get("displayName", "?")
@@ -234,17 +244,19 @@ def build_tools(ctx: ToolContext) -> list:
             return ("Finding someone's DM needs company directory access, which "
                     "the user declined.")
         try:
-            matches = _search_directory(person_name)
-            if not matches:
-                # Directory search is prefix-based, so one mis-heard syllable
-                # ("Ranjna", "Ranjan a") returns nothing at all. Retry shorter
-                # before telling the user the person does not exist.
-                first = person_name.split()[0] if person_name.split() else ""
-                for attempt in (first, first[:4]):
-                    if len(attempt) >= 3:
-                        matches = _search_directory(attempt)
-                        if matches:
-                            break
+            # Phonetic, whole-directory matching: "Diksha" finds "Deeksha" on
+            # the FIRST call. The literal prefix search turned one romanization
+            # mismatch into a multi-minute interrogation the user abandoned.
+            matches, confident = _directory.resolve(_people(), person_name)
+            narrowed_from = 0
+            if len(matches) > 1:
+                # The same name often exists as an external directory contact
+                # too. "Message Mansi" means the colleague; a DM can only
+                # exist with a colleague anyway.
+                narrowed, did = _directory.prefer_colleagues(matches, _my_domain())
+                if did:
+                    narrowed_from = len(matches)
+                    matches, confident = narrowed, True
         except Exception as e:
             ctx.audit.record("tool_call", tool="find_direct_message",
                              detail=person_name, ok=False)
@@ -262,8 +274,17 @@ def build_tools(ctx: ToolContext) -> list:
             ctx.audit.record("tool_call", tool="find_direct_message",
                              detail=f"{person_name} -> {len(matches)} ambiguous")
             return (f"AMBIGUOUS: {len(matches)} people match '{person_name}'. Do NOT "
-                    "choose one yourself — ask the user which they mean, then call "
-                    f"this tool again with the full name.\n{listing}")
+                    "choose one yourself — ask the user which they mean, in ONE "
+                    "short spoken sentence using given names or distinguishing "
+                    "words only (e.g. \"Deeksha, Devanshi, ya Divya?\"). NEVER read "
+                    "email addresses aloud; they are for your reference below.\n"
+                    f"{listing}")
+        if not confident:
+            # One match, but only by loose prefix — say who was assumed, so a
+            # wrong guess is caught at the confirmation, not after the send.
+            person = matches[0]
+            ctx.audit.record("tool_call", tool="find_direct_message",
+                             detail=f"{person_name} ~> {_describe(person)} (loose match)")
 
         person = matches[0]
         display = (person.get("names") or [{}])[0].get("displayName", person_name)
@@ -285,8 +306,18 @@ def build_tools(ctx: ToolContext) -> list:
         space_labels[space_id] = f"{display} (direct message)"
         ctx.audit.record("tool_call", tool="find_direct_message",
                          detail=f"{display} -> {space_id}")
+        note = ""
+        if narrowed_from:
+            note = (f" NOTE: {narrowed_from} directory entries matched "
+                    f"'{person_name}'; the others are external contacts, so your "
+                    f"colleague {display} was chosen. No need to ask — the send "
+                    "confirmation names them.")
+        elif not confident:
+            note = (f" NOTE: '{person_name}' matched {display} only loosely — "
+                    "mention the name you resolved to when you confirm, so a "
+                    "wrong guess is caught before anything sends.")
         return (f"Direct message with {display}: space id {space_id}. "
-                f"Use send_chat_message with this space id to message them.")
+                f"Use send_chat_message with this space id to message them.{note}")
 
     @beta_tool
     def list_chat_spaces(name_filter: str = "") -> str:

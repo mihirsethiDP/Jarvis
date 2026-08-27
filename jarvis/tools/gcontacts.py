@@ -17,6 +17,7 @@ from __future__ import annotations
 from anthropic import beta_tool
 
 from . import ToolContext, as_document
+from . import directory as _directory
 
 _READ_MASK = "names,emailAddresses,phoneNumbers"
 _ADMIN_HINT = (
@@ -42,31 +43,9 @@ def build_tools(ctx: ToolContext) -> list:
         if not ctx.permissions.require("directory_read", "look up colleagues in your company directory"):
             return "The user declined company directory access."
         try:
-            # DOMAIN_CONTACT covers the shared contacts an admin publishes —
-            # clients, vendors, site engineers. Without it those people are
-            # invisible and Jarvis says they are not in the directory.
-            resp = _people().people().searchDirectoryPeople(
-                query=name, readMask=_READ_MASK,
-                sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
-                         "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"],
-                pageSize=30,
-            ).execute()
-            people = resp.get("people", [])
-            # Prefix matching misses a mis-heard name entirely; retry shorter
-            # before telling the user the person does not exist.
-            if not people and name.split():
-                first = name.split()[0]
-                for attempt in (first, first[:4]):
-                    if len(attempt) >= 3:
-                        retry = _people().people().searchDirectoryPeople(
-                            query=attempt, readMask=_READ_MASK,
-                            sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
-                                     "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"],
-                            pageSize=30,
-                        ).execute()
-                        people = retry.get("people", [])
-                        if people:
-                            break
+            # Whole-directory phonetic matching: "Diksha" finds "Deeksha" on
+            # the first call. See jarvis/tools/directory.py.
+            people, confident = _directory.resolve(_people(), name)
             ctx.audit.record("tool_call", tool="find_colleague",
                              detail=f"{name} -> {len(people)} match(es)")
             if not people:

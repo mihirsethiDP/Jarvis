@@ -143,14 +143,23 @@ def _dual_service(chat, people):
 
 
 def _directory(*entries):
+    # Person resolution now fetches the whole directory once and matches
+    # locally (phonetically), instead of Google's prefix-literal search —
+    # so the fake feeds listDirectoryPeople, and the module cache is primed
+    # directly to keep each test hermetic.
+    from jarvis.tools import directory as directory_mod
+
+    entries_as_people = [
+        {"resourceName": f"people/{pid}",
+         "names": [{"displayName": name}],
+         "emailAddresses": [{"value": email}]}
+        for pid, name, email in entries
+    ]
+    directory_mod._cache.update(at=float("inf"), people=entries_as_people)
+
     people = MagicMock()
-    people.people().searchDirectoryPeople.return_value.execute.return_value = {
-        "people": [
-            {"resourceName": f"people/{pid}",
-             "names": [{"displayName": name}],
-             "emailAddresses": [{"value": email}]}
-            for pid, name, email in entries
-        ]
+    people.people().listDirectoryPeople.return_value.execute.return_value = {
+        "people": entries_as_people
     }
     return people
 
