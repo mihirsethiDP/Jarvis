@@ -62,13 +62,26 @@ def build_tools(ctx: ToolContext) -> list:
         try:
             who = _people().people().get(
                 resourceName="people/me", personFields="names").execute()
+            me_cache["id"] = "users/" + who["resourceName"].split("/")[-1]
+            return me_cache["id"]
         except Exception:
-            # Deliberately NOT cached: seeding "" here made _dm_partner match
-            # the user's own messages, so a DM got labelled with the sender's
-            # own name and the send confirmation named the wrong person.
-            return ""
-        me_cache["id"] = "users/" + who["resourceName"].split("/")[-1]
-        return me_cache["id"]
+            pass
+        # people/me needs a profile scope Jarvis does not hold (403 verified).
+        # Fall back to the chain our scopes do support: Gmail profile gives
+        # the address, the directory maps it to the person id.
+        try:
+            address = ctx.google_service("gmail", "v1").users().getProfile(
+                userId="me").execute().get("emailAddress", "").casefold()
+            everyone = _directory._fetch_all(_people()) or []
+            for person in everyone:
+                if _directory.email(person).casefold() == address:
+                    me_cache["id"] = "users/" + person["resourceName"].split("/")[-1]
+                    return me_cache["id"]
+        except Exception:
+            pass
+        # Deliberately NOT cached: seeding "" made _dm_partner match the
+        # user's own messages and the confirmation named the wrong person.
+        return ""
 
     def _resolve_people(user_resources: list[str]) -> None:
         """Resolve many ids in one request.

@@ -179,14 +179,15 @@ _CAPABILITY_LABELS = {
 
 def build_all_tools(ctx: ToolContext) -> list:
     """Assemble the tool list for the agent, honoring standing denials."""
-    from . import (ai_bridge, claude_bridge, code_sandbox, gcalendar, gchat,
-                   gcontacts, gdrive, gmail, internal, local_files, memory_tools,
-                   weather, web_search)
+    from . import (ai_bridge, claude_bridge, code_sandbox, email_style_tool,
+                   gcalendar, gchat, gcontacts, gdrive, gmail, internal,
+                   local_files, memory_tools, weather, web_search)
 
     tools: list = []
     tools += local_files.build_tools(ctx)
     tools += gdrive.build_tools(ctx)
     tools += gmail.build_tools(ctx)
+    tools += email_style_tool.build_tools(ctx)
     tools += gchat.build_tools(ctx)
     tools += gcalendar.build_tools(ctx)
     tools += gcontacts.build_tools(ctx)
