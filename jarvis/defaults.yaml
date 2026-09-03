@@ -3,7 +3,8 @@
 # only the keys you want to change). Nothing in this file is a secret.
 
 assistant:
-  name: Jarvis
+  # The tool's product name; spoken and shown on every surface.
+  name: DP Assistant
   # When true, skip the microphone entirely and run as a console chat.
   text_mode: false
 

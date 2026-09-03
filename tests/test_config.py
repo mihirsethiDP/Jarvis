@@ -23,7 +23,8 @@ def test_packaged_defaults_load(tmp_path):
     # own %APPDATA%\Jarvis\config.yaml never leaks into the assertion.
     cfg = load_config(str(tmp_path / "no-user-config.yaml"))
     assert cfg.model
-    assert cfg.get("assistant.name") == "Jarvis"
+    # Renamed on user request: the product is DP Assistant.
+    assert cfg.get("assistant.name") == "DP Assistant"
     assert cfg.session_grant_minutes > 0
 
 

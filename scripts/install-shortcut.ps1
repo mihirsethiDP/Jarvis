@@ -17,8 +17,8 @@ $repo = Split-Path $PSScriptRoot -Parent
 
 $desktop = [Environment]::GetFolderPath("Desktop")
 $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-$targets = @((Join-Path $desktop "Jarvis.lnk"))
-if (-not $NoStartMenu) { $targets += (Join-Path $startMenu "Jarvis.lnk") }
+$targets = @((Join-Path $desktop "DP Assistant.lnk"))
+if (-not $NoStartMenu) { $targets += (Join-Path $startMenu "DP Assistant.lnk") }
 
 if ($Remove) {
     foreach ($t in $targets) {
@@ -52,12 +52,12 @@ foreach ($path in $targets) {
     $sc.TargetPath = $pythonw
     $sc.Arguments = "-m jarvis --open-ui"
     $sc.WorkingDirectory = $root
-    $sc.Description = "Jarvis - DigitalPaani voice assistant"
+    $sc.Description = "DP Assistant - DigitalPaani voice assistant"
     if (Test-Path $icon) { $sc.IconLocation = $icon }
     $sc.Save()
     Write-Host "Created $path" -ForegroundColor Green
 }
 
 Write-Host ""
-Write-Host "Double-click Jarvis to start. The orb opens in its own window;" -ForegroundColor Cyan
+Write-Host "Double-click DP Assistant to start. The orb opens in its own window;" -ForegroundColor Cyan
 Write-Host "'Quit Jarvis' in that window stops it. No terminal involved."

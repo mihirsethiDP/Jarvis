@@ -97,6 +97,9 @@ class JarvisApp:
 
                     overlay = Overlay(port=int(config.get("ui.port", 8763)),
                                       on_listen=self._listen_from_ui,
+                                      # Yes/No on the widget answers the same
+                                      # pending question the HUD's card does.
+                                      on_answer=self._answer_from_ui,
                                       wake_phrase=spoken_phrase(
                                           str(config.get("audio.wake.model", "hey_jarvis"))))
                     self.overlay = overlay if overlay.start() else None
@@ -217,6 +220,8 @@ class JarvisApp:
                     server.clear_prompt()
             if server is not None:
                 server.publish_message("jarvis", reply)
+            if self.overlay is not None and reply:
+                self.overlay.publish_message(reply)
             self._publish("idle")
 
     def _listen_from_ui(self) -> bool:
@@ -391,11 +396,21 @@ class JarvisApp:
             v["speaker"].say(text)
             v["mic"].drain()
 
-        server = self.state_server
+        def prompt_out(prompt: str) -> None:
+            if self.state_server is not None:
+                self.state_server.publish_prompt(prompt)
+            if self.overlay is not None:
+                self.overlay.publish_prompt(prompt)
+
+        def prompt_done() -> None:
+            if self.state_server is not None:
+                self.state_server.clear_prompt()
+            if self.overlay is not None:
+                self.overlay.clear_prompt()
+
         return VoiceIO(
             speak=speak, listen=listen_for_answer, listen_short=listen_short,
-            on_prompt=None if server is None else server.publish_prompt,
-            on_prompt_done=None if server is None else server.clear_prompt,
+            on_prompt=prompt_out, on_prompt_done=prompt_done,
         )
 
     # ------------------------------------------------------------------

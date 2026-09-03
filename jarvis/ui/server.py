@@ -47,7 +47,7 @@ class StateServer:
         self._app = self._build_app()
 
     def _build_app(self) -> FastAPI:
-        app = FastAPI(title="Jarvis status")
+        app = FastAPI(title="DP Assistant status")
 
         @app.on_event("startup")
         async def _capture_loop() -> None:

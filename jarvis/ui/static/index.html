@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jarvis</title>
+<title>DP Assistant</title>
 <style>
   /* == Carbon & Ember ==================================================== */
   :root {
@@ -213,9 +213,9 @@
 <body>
 <div id="frame">
   <header>
-    <div id="brand"><b>JARVIS</b><span>DIGITALPAANI</span></div>
+    <div id="brand"><b>DP&thinsp;ASSISTANT</b><span>DIGITALPAANI</span></div>
     <div id="wake-chip">say <b id="wake">…</b> or press Talk</div>
-    <button id="quit">Quit Jarvis</button>
+    <button id="quit">Quit</button>
   </header>
 
   <div id="stage">
@@ -248,12 +248,12 @@
   </div>
 
   <div id="composer">
-    <textarea id="say" placeholder="Type what you need — Jarvis replies here"></textarea>
+    <textarea id="say" placeholder="Type what you need — DP Assistant replies here"></textarea>
     <button id="talk" class="btn">🎙 Talk</button>
     <button id="send" class="btn">Send</button>
   </div>
 </div>
-<div id="offline-veil"><div>Jarvis is offline.</div>
+<div id="offline-veil"><div>DP Assistant is offline.</div>
   <div style="font-size:12px;color:var(--ink-faint)">Start it from the desktop shortcut — this page reconnects on its own.</div>
 </div>
 
@@ -474,7 +474,7 @@ function addMessage(role, text) {
   div.className = "msg " + (role === "you" ? "you" : "jarvis");
   const who = document.createElement("span");
   who.className = "who";
-  who.textContent = role === "you" ? "You" : "Jarvis";
+  who.textContent = role === "you" ? "You" : "DP Assistant";
   const body = document.createElement("span");
   body.textContent = text;                       // textContent, always
   div.append(who, body);
@@ -562,7 +562,7 @@ $("say").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("send").click(); }
 });
 $("talk").onclick = () => post("/listen");
-$("quit").onclick = () => { if (confirm("Stop Jarvis?")) post("/quit"); };
+$("quit").onclick = () => { if (confirm("Stop DP Assistant?")) post("/quit"); };
 
 $("yes").onclick = () => { post("/answer", { answer: "yes" }); setPrompt(""); };
 $("no").onclick  = () => { post("/answer", { answer: "no" });  setPrompt(""); };
