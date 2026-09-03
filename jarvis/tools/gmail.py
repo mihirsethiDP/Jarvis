@@ -300,20 +300,39 @@ def build_tools(ctx: ToolContext) -> list:
                         "email (Gmail caps attachments around 25 MB). Try sharing it "
                         "via Drive instead.")
 
-        preview = body if len(body) <= 200 else body[:200] + "…"
-        summary = (
-            f"I will send an email to {to}"
-            + (f" (cc {cc})" if cc else "")
-            + f' with the subject "{subject}"'
-            + (f", attaching {attachment.name} "
-               f"({max(1, attachment.stat().st_size // 1024)} KB)" if attachment else "")
-            + f'. It begins: "{preview}".'
-        )
-        result = ctx.confirmer.confirm(
-            "send_email", summary,
-            audit_detail=(f'to={to} cc={cc} subject="{subject}"'
-                          + (f" attach={attachment.name}" if attachment else "")),
-        )
+        attach_note = (f", attaching {attachment.name} "
+                       f"({max(1, attachment.stat().st_size // 1024)} KB)"
+                       if attachment else "")
+        if ctx.preview is not None:
+            # The full draft goes on the HUD where the user can actually read
+            # it; the spoken confirmation becomes one short question. Reciting
+            # a whole email through TTS was most of the cost of confirming.
+            shown = body
+            if attachment:
+                shown += f"\n\n[attachment: {attachment.name}]"
+            ctx.preview(f"Draft to {to} — {subject}", shown)
+            summary = (f"The draft to {to}"
+                       + (f" (cc {cc})" if cc else "")
+                       + f' about "{subject}"{attach_note} is on your screen.'
+                       " Send it?")
+        else:
+            body_preview = body if len(body) <= 200 else body[:200] + "…"
+            summary = (
+                f"I will send an email to {to}"
+                + (f" (cc {cc})" if cc else "")
+                + f' with the subject "{subject}"'
+                + attach_note
+                + f'. It begins: "{body_preview}".'
+            )
+        try:
+            result = ctx.confirmer.confirm(
+                "send_email", summary,
+                audit_detail=(f'to={to} cc={cc} subject="{subject}"'
+                              + (f" attach={attachment.name}" if attachment else "")),
+            )
+        finally:
+            if ctx.clear_preview is not None:
+                ctx.clear_preview()
         if not result:
             return cancelled_by_user(result, "sending the email")
 

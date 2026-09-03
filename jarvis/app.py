@@ -134,6 +134,10 @@ class JarvisApp:
             config=config, permissions=self.permissions,
             confirmer=self.confirmer, audit=self.audit, memory=self.memory,
             turn_budget=self.turn_budget,
+            preview=(None if self.state_server is None
+                     else self.state_server.publish_draft),
+            clear_preview=(None if self.state_server is None
+                           else self.state_server.clear_draft),
         )
         if (self.permissions.denied("memory_recall")
                 and not self.permissions.denied("memory_write")):

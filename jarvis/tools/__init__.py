@@ -36,6 +36,11 @@ class ToolContext:
     # bind to the live employee's %APPDATA% memory file (tests included).
     memory: MemoryStore | None = None
     turn_budget: Any = None
+    # Show outgoing content (an email draft) on the HUD before confirming, so
+    # the spoken question can be short. None when no UI is attached; tools
+    # must fall back to reading the content aloud.
+    preview: Any = None
+    clear_preview: Any = None
     _services: dict[str, Any] = field(default_factory=dict)
 
     def google_service(self, api: str, version: str):

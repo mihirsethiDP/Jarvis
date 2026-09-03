@@ -166,6 +166,11 @@ def build_tools(ctx: ToolContext) -> list:
         result = ctx.confirmer.confirm(
             "create_calendar_event", summary_text,
             audit_detail=f"{summary} {start}..{end} attendees={len(attendee_list)}",
+            # An event with no attendees emails nobody and deletes in one
+            # call — reversible, so smart mode may proceed on an announcement.
+            # The moment anyone is invited, mail goes out: full confirmation.
+            auto_ok=not attendee_list,
+            announce=f'Adding "{summary}" to your calendar.',
         )
         if not result:
             return cancelled_by_user(result, "creating that event")

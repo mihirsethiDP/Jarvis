@@ -2,597 +2,579 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Jarvis</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
 <style>
+  /* == Carbon & Ember ==================================================== */
   :root {
-    --bg0: #05070d; --bg1: #010205;
-    --ink: #d3dcef; --dim: #78859c; --line: #151d33;
-    --warn: #ff6b6b; --good: #45d18a;
+    --carbon-0: #08090b;   /* page floor */
+    --carbon-1: #0e1013;   /* panels */
+    --carbon-2: #16181d;   /* raised */
+    --carbon-3: #22252c;   /* strokes */
+    --ember:    #ff6b1a;   /* primary accent */
+    --ember-hi: #ffb066;   /* hot highlight */
+    --ember-lo: #c33e00;   /* deep coal */
+    --ink:      #e8e6e1;   /* primary text */
+    --ink-dim:  #8b8f98;   /* secondary text */
+    --ink-faint:#565a63;
+    --ok:       #57c78a;
+    --bad:      #e5484d;
+    --radius: 14px;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
-    background: radial-gradient(ellipse at 50% 45%, var(--bg0) 0%, var(--bg1) 70%);
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-    color: var(--ink); overflow: hidden;
-    display: grid; grid-template-columns: 1fr minmax(300px, 390px);
+    background:
+      radial-gradient(1200px 700px at 50% -10%, #15120e 0%, transparent 60%),
+      radial-gradient(900px 500px at 50% 115%, #120d09 0%, transparent 55%),
+      var(--carbon-0);
+    color: var(--ink);
+    font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
   }
-  @media (max-width: 880px) {
-    body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; overflow: auto; }
-    .panel { height: 38vh; border-left: none; border-top: 1px solid var(--line); }
+  ::selection { background: rgba(255,107,26,.35); }
+
+  /* == Frame ============================================================= */
+  #frame { display: grid; grid-template-rows: 52px 1fr auto; height: 100vh; }
+
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 0 18px;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+    background: rgba(14,16,19,.6); backdrop-filter: blur(10px);
+  }
+  #brand { display: flex; align-items: baseline; gap: 8px; }
+  #brand b {
+    font-size: 15px; letter-spacing: .35em; font-weight: 650;
+    background: linear-gradient(100deg, var(--ink) 30%, var(--ember-hi) 70%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #brand span { color: var(--ink-faint); font-size: 11px; letter-spacing: .12em; }
+  #wake-chip {
+    margin-left: auto; font-size: 12px; color: var(--ink-dim);
+    border: 1px solid var(--carbon-3); border-radius: 999px; padding: 4px 12px;
+    background: var(--carbon-1);
+  }
+  #wake-chip b { color: var(--ember-hi); font-weight: 600; }
+  #quit {
+    border: 1px solid var(--carbon-3); background: transparent; color: var(--ink-dim);
+    border-radius: 999px; padding: 4px 14px; font: inherit; font-size: 12px;
+    cursor: pointer; transition: all .15s;
+  }
+  #quit:hover { border-color: var(--bad); color: var(--bad); }
+
+  /* == Stage ============================================================= */
+  #stage {
+    display: grid; grid-template-columns: minmax(380px, 46%) 1fr;
+    min-height: 0;
+  }
+  #left {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 6px; padding: 12px; min-height: 0;
+    position: relative;
+  }
+  #orb { width: min(46vh, 92%); aspect-ratio: 1; display: block; }
+
+  /* status capsule under the orb — the "what is it doing" answer */
+  #status {
+    text-align: center; max-width: 92%;
+  }
+  #state-label {
+    font-size: 21px; font-weight: 600; letter-spacing: .02em;
+    transition: color .3s;
+  }
+  #state-label.asking { color: var(--ember-hi); }
+  #state-detail {
+    margin-top: 3px; color: var(--ink-dim); font-size: 13px;
+    min-height: 20px; max-height: 40px; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dots::after {
+    content: ""; display: inline-block; width: 1.4em; text-align: left;
+    animation: dots 1.4s steps(4) infinite;
+  }
+  @keyframes dots { 0%{content:""} 25%{content:"."} 50%{content:".."} 75%{content:"..."} }
+
+  /* == Right column: conversation + activity =========================== */
+  #right {
+    display: grid; grid-template-rows: 1fr auto; gap: 0; min-height: 0;
+    border-left: 1px solid rgba(255,255,255,.05); background: rgba(10,11,13,.4);
+  }
+  #convo { overflow-y: auto; padding: 18px 20px 6px; scroll-behavior: smooth; }
+  .msg { max-width: 82%; margin: 0 0 10px; padding: 9px 13px; border-radius: 13px;
+         white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
+  .msg.you {
+    margin-left: auto; background: linear-gradient(135deg, #33210f, #2a1a0c);
+    border: 1px solid rgba(255,107,26,.25); border-bottom-right-radius: 4px;
+  }
+  .msg.jarvis {
+    background: var(--carbon-2); border: 1px solid var(--carbon-3);
+    border-bottom-left-radius: 4px;
+  }
+  .msg .who { display: block; font-size: 10px; letter-spacing: .14em;
+              color: var(--ink-faint); margin-bottom: 2px; text-transform: uppercase; }
+  .msg.you .who { color: rgba(255,176,102,.6); }
+
+  /* draft card — outgoing content shown before it is sent */
+  #draft {
+    display: none; margin: 0 0 12px; border-radius: var(--radius);
+    border: 1px solid rgba(255,107,26,.4);
+    background: linear-gradient(180deg, rgba(255,107,26,.08), rgba(255,107,26,.02));
+    overflow: hidden;
+  }
+  #draft.show { display: block; animation: rise .25s ease-out; }
+  #draft-title {
+    padding: 9px 14px; font-size: 12px; font-weight: 600; letter-spacing: .06em;
+    color: var(--ember-hi); border-bottom: 1px solid rgba(255,107,26,.2);
+    background: rgba(255,107,26,.07);
+  }
+  #draft-body {
+    padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: 13px; color: var(--ink); max-height: 38vh; overflow-y: auto;
   }
 
-  /* -- the HUD -- */
-  .stage { position: relative; display: flex; flex-direction: column;
-           align-items: center; justify-content: center; min-height: 0; }
-  #hud { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .brand { position: absolute; top: 1.8rem; font-size: .68rem; font-weight: 500;
-           letter-spacing: .58em; text-transform: uppercase; color: var(--dim);
-           text-indent: .58em; z-index: 2; }
-  .readout { position: absolute; bottom: 2.2rem; text-align: center;
-             pointer-events: none; width: 100%; z-index: 2; }
-  #state { font-size: 1.05rem; font-weight: 500; letter-spacing: .22em;
-           text-transform: uppercase; transition: color .5s ease; }
-  #detail { margin: .6rem auto 0; max-width: 30rem; padding: 0 1.5rem;
-            font-size: .85rem; line-height: 1.5; color: var(--dim); min-height: 2.6em; }
-  .no-canvas #hud { display: none; }
+  /* the question card — impossible to miss when Jarvis is waiting on you */
+  #ask {
+    display: none; margin: 0 0 12px; padding: 14px 16px;
+    border-radius: var(--radius); border: 1px solid rgba(255,107,26,.55);
+    background: linear-gradient(180deg, rgba(255,107,26,.14), rgba(255,107,26,.04));
+    box-shadow: 0 0 24px rgba(255,107,26,.12);
+  }
+  #ask.show { display: block; animation: rise .25s ease-out; }
+  #ask-q { font-size: 14px; margin-bottom: 11px; white-space: pre-wrap; }
+  #ask .row { display: flex; gap: 8px; }
+  #ask button {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border-radius: 9px; padding: 7px 22px; transition: transform .1s;
+  }
+  #ask button:active { transform: scale(.96); }
+  #yes { background: var(--ember); border: 1px solid var(--ember-hi); color: #1a0d02; }
+  #no  { background: transparent; border: 1px solid var(--carbon-3); color: var(--ink-dim); }
+  #ask input {
+    flex: 1; font: inherit; font-size: 13px; background: var(--carbon-1);
+    border: 1px solid var(--carbon-3); border-radius: 9px; padding: 7px 11px;
+    color: var(--ink); outline: none;
+  }
+  #ask input:focus { border-color: rgba(255,107,26,.5); }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
-  /* -- activity -- */
-  .panel { background: #04070fcc; border-left: 1px solid var(--line);
-           display: flex; flex-direction: column; min-height: 0; }
-  .panel header { padding: 1rem 1.15rem; border-bottom: 1px solid var(--line);
-                  display: flex; align-items: center; justify-content: space-between; }
-  .panel h2 { font-size: .7rem; font-weight: 600; letter-spacing: .18em;
-              text-transform: uppercase; color: var(--dim); }
-  .live { display: flex; align-items: center; gap: .45rem; font-size: .67rem; color: var(--dim); }
-  .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--good);
-            animation: blink 1.8s ease-in-out infinite; }
-  .live.down i { background: var(--warn); animation: none; }
-  @keyframes blink { 50% { opacity: .2; } }
-  #feed { overflow-y: auto; padding: .45rem; flex: 1;
-          display: flex; flex-direction: column-reverse; }
-  .row { display: grid; grid-template-columns: 3.5rem 1fr; gap: .55rem;
-         padding: .5rem .55rem; border-radius: 8px; font-size: .82rem; line-height: 1.45; }
-  .row:hover { background: #ffffff08; }
-  .row .t { font-variant-numeric: tabular-nums; color: var(--dim); font-size: .73rem; }
-  .row b { font-weight: 600; }
-  .row .d { color: var(--dim); font-size: .76rem; word-break: break-word; margin-top: .1rem; }
-  .badge { display: inline-block; font-size: .63rem; letter-spacing: .05em;
-           text-transform: uppercase; padding: .08rem .38rem; border-radius: 4px;
-           margin-left: .4rem; border: 1px solid var(--line); color: var(--dim); }
-  .row.bad b { color: var(--warn); }
-  .row.bad .badge { color: var(--warn); border-color: var(--warn); }
-  .row.ok .badge { color: var(--good); border-color: var(--good); }
-  .empty { color: var(--dim); font-size: .79rem; text-align: center;
-           padding: 2.5rem 1.2rem; line-height: 1.6; }
-  .note { padding: .6rem 1.15rem; border-top: 1px solid var(--line);
-          font-size: .66rem; color: var(--dim); letter-spacing: .08em; text-align: center; }
-  .quit { margin: 0 1.15rem 1.15rem; padding: .6rem; border-radius: 8px; cursor: pointer;
-          background: transparent; border: 1px solid var(--line); color: var(--dim);
-          font: inherit; font-size: .77rem; letter-spacing: .04em; transition: .2s; }
-  .quit:hover { border-color: var(--warn); color: var(--warn); }
-  .quit:disabled { opacity: .5; cursor: default; }
+  /* activity ticker */
+  #activity {
+    border-top: 1px solid rgba(255,255,255,.05); max-height: 148px;
+    overflow-y: auto; padding: 8px 20px 10px; font-size: 11.5px;
+  }
+  #activity h4 {
+    font-size: 10px; letter-spacing: .18em; color: var(--ink-faint);
+    text-transform: uppercase; margin: 2px 0 6px; position: sticky; top: -8px;
+    background: #0b0c0f; padding: 4px 0;
+  }
+  .act { display: flex; gap: 8px; color: var(--ink-dim); padding: 1.5px 0; }
+  .act .ts { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .act .tool { color: var(--ember-hi); }
+  .act.bad .tool { color: var(--bad); }
 
-  /* -- talking to it -- */
-  .composer { border-top: 1px solid var(--line); padding: .8rem .9rem; }
-  .chat { max-height: 34vh; overflow-y: auto; display: flex; flex-direction: column;
-          gap: .5rem; padding: 0 .2rem .7rem; }
-  .msg { font-size: .86rem; line-height: 1.5; padding: .5rem .7rem; border-radius: 10px;
-         max-width: 92%; white-space: pre-wrap; word-break: break-word; }
-  .msg.you { align-self: flex-end; background: #17233d; color: var(--ink); }
-  .msg.jarvis { align-self: flex-start; background: #0c1526; color: var(--ink); }
-  .row2 { display: flex; gap: .5rem; align-items: flex-end; }
-  #say { flex: 1; resize: none; min-height: 2.4rem; max-height: 7rem; padding: .55rem .7rem;
-         border-radius: 9px; border: 1px solid var(--line); background: #060b16;
-         color: var(--ink); font: inherit; font-size: .87rem; }
-  #say:focus { outline: none; border-color: #2b3d63; }
-  .btn { border-radius: 9px; border: 1px solid var(--line); background: transparent;
-         color: var(--dim); font: inherit; font-size: .8rem; padding: .55rem .8rem;
-         cursor: pointer; transition: .18s; white-space: nowrap; }
-  .btn:hover:not(:disabled) { border-color: #35507f; color: var(--ink); }
-  .btn:disabled { opacity: .45; cursor: default; }
-  .btn.talk.on { border-color: var(--good); color: var(--good); }
-  .hint { font-size: .68rem; color: var(--dim); margin-top: .45rem; letter-spacing: .02em; }
+  /* == Composer ========================================================== */
+  #composer {
+    display: flex; gap: 10px; align-items: center; padding: 12px 18px 14px;
+    border-top: 1px solid rgba(255,255,255,.05);
+    background: rgba(14,16,19,.75); backdrop-filter: blur(10px);
+  }
+  #say {
+    flex: 1; resize: none; height: 42px; font: inherit; color: var(--ink);
+    background: var(--carbon-1); border: 1px solid var(--carbon-3);
+    border-radius: 11px; padding: 10px 14px; outline: none; transition: border .15s;
+  }
+  #say:focus { border-color: rgba(255,107,26,.45); }
+  .btn {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border-radius: 11px; padding: 10px 20px; transition: all .15s; border: 1px solid;
+  }
+  #talk { background: var(--carbon-2); border-color: var(--carbon-3); color: var(--ink); }
+  #talk:hover { border-color: rgba(255,107,26,.5); color: var(--ember-hi); }
+  #send { background: linear-gradient(135deg, var(--ember), var(--ember-lo));
+          border-color: var(--ember); color: #1a0d02; }
+  #send:hover { filter: brightness(1.12); }
 
-  /* -- a question waiting on an answer -- */
-  .ask { margin: 0 .9rem .7rem; padding: .7rem .8rem; border-radius: 10px;
-         border: 1px solid #3a4a20; background: #141a0c; }
-  .ask p { font-size: .84rem; line-height: 1.5; margin-bottom: .6rem; }
-  .ask .row2 { gap: .45rem; }
-  .ask .btn.yes { border-color: var(--good); color: var(--good); }
-  .ask .btn.no { border-color: var(--warn); color: var(--warn); }
+  #offline-veil {
+    display: none; position: fixed; inset: 0; z-index: 30;
+    background: rgba(8,9,11,.8); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center; color: var(--ink-dim);
+    font-size: 15px; flex-direction: column; gap: 8px;
+  }
+  #offline-veil.show { display: flex; }
 
-  /* -- thinking loader -- */
-  .dots { display: inline-flex; gap: .22rem; vertical-align: middle; margin-left: .4rem; }
-  .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor;
-            animation: bob 1.1s infinite ease-in-out; }
-  .dots i:nth-child(2) { animation-delay: .16s; }
-  .dots i:nth-child(3) { animation-delay: .32s; }
-  @keyframes bob { 0%,80%,100% { opacity:.25; transform: translateY(0); }
-                   40% { opacity:1; transform: translateY(-3px); } }
+  @media (max-width: 900px) {
+    #stage { grid-template-columns: 1fr; grid-template-rows: 46% 1fr; }
+    #right { border-left: none; border-top: 1px solid rgba(255,255,255,.05); }
+    #orb { width: min(38vh, 70%); }
+  }
 </style>
 </head>
 <body>
-  <main class="stage">
-    <div class="brand">Jarvis</div>
-    <canvas id="hud"></canvas>
-    <div class="readout">
-      <div id="state">connecting</div>
-      <div id="detail"></div>
-    </div>
-  </main>
+<div id="frame">
+  <header>
+    <div id="brand"><b>JARVIS</b><span>DIGITALPAANI</span></div>
+    <div id="wake-chip">say <b id="wake">…</b> or press Talk</div>
+    <button id="quit">Quit Jarvis</button>
+  </header>
 
-  <section class="panel">
-    <header>
-      <h2>Activity</h2>
-      <span class="live" id="live"><i></i><span id="livetext">live</span></span>
-    </header>
-    <div id="feed"><div class="empty">Nothing yet.<br>Everything Jarvis does appears here as it happens.</div></div>
-    <div class="ask" id="ask" hidden>
-      <p id="askText"></p>
-      <div class="row2">
-        <button class="btn yes" id="askYes">Yes</button>
-        <button class="btn no" id="askNo">No</button>
+  <div id="stage">
+    <div id="left">
+      <canvas id="orb"></canvas>
+      <div id="status">
+        <div id="state-label">Connecting…</div>
+        <div id="state-detail"></div>
       </div>
     </div>
 
-    <div class="composer" id="composer" hidden>
-      <div class="chat" id="chat"></div>
-      <div class="row2">
-        <textarea id="say" rows="1" placeholder="Type what you need — Enter to send"></textarea>
-        <button class="btn talk" id="talk" title="Speak without the wake word">Talk</button>
-        <button class="btn" id="send">Send</button>
+    <div id="right">
+      <div id="convo">
+        <div id="draft">
+          <div id="draft-title"></div>
+          <div id="draft-body"></div>
+        </div>
+        <div id="ask">
+          <div id="ask-q"></div>
+          <div class="row">
+            <button id="yes">Yes</button>
+            <button id="no">No</button>
+            <input id="ask-free" placeholder="…or answer in your own words"
+                   autocomplete="off">
+          </div>
+        </div>
       </div>
-      <div class="hint" id="hint">Enter sends &middot; Shift+Enter for a new line</div>
+      <div id="activity"><h4>Activity</h4><div id="act-list"></div></div>
     </div>
+  </div>
 
-    <div class="note" id="note">127.0.0.1 only &middot; never leaves this machine</div>
-    <button id="quit" class="quit" hidden>Quit Jarvis</button>
-  </section>
+  <div id="composer">
+    <textarea id="say" placeholder="Type what you need — Jarvis replies here"></textarea>
+    <button id="talk" class="btn">🎙 Talk</button>
+    <button id="send" class="btn">Send</button>
+  </div>
+</div>
+<div id="offline-veil"><div>Jarvis is offline.</div>
+  <div style="font-size:12px;color:var(--ink-faint)">Start it from the desktop shortcut — this page reconnects on its own.</div>
+</div>
 
 <script>
 "use strict";
+/* ======================================================================
+   Carbon & Ember orb — high-resolution (devicePixelRatio-aware) canvas.
+   The orb is the primary state instrument: every state has a distinct
+   motion signature, so what Jarvis is doing is readable from across the
+   room, before reading a single word.
+   ====================================================================== */
+const canvas = document.getElementById("orb");
+const ctx = canvas.getContext("2d");
+let DPR = 1, SIZE = 0;
 
-/* ── states ──────────────────────────────────────────────────
-   The HUD is monochrome by design, so the state has to come through in
-   motion as much as colour: how fast the rings turn, and how far the
-   spectrum ticks throw. Read from across a desk, that difference carries
-   further than hue does. */
-const STATES = {
-  starting:     { label: "starting",     hue: 210, sat: 8,  spin: 0.25, energy: 0.18, pulse: 0.0 },
-  idle:         { label: "hey jarvis",   hue: 200, sat: 45, spin: 0.45, energy: 0.30, pulse: 0.0 },
-  listening:    { label: "listening",    hue: 186, sat: 72, spin: 1.30, energy: 1.00, pulse: 0.0 },
-  transcribing: { label: "heard you — writing it down", hue: 265, sat: 60, spin: 1.70, energy: 0.72, pulse: 0.0 },
-  thinking:     { label: "working",      hue: 40,  sat: 78, spin: 2.40, energy: 0.62, pulse: 0.0 },
-  // Published while a tool runs. Without it the HUD fell back to "idle"
-  // during the longest part of a turn and looked like it had stopped.
-  working:      { label: "working",      hue: 40,  sat: 78, spin: 2.40, energy: 0.62, pulse: 0.0 },
-  speaking:     { label: "speaking",     hue: 155, sat: 66, spin: 0.90, energy: 0.88, pulse: 1.0 },
-  offline:      { label: "offline",      hue: 0,   sat: 50, spin: 0.06, energy: 0.05, pulse: 0.0 },
+function fitCanvas() {
+  DPR = Math.min(window.devicePixelRatio || 1, 3);
+  const css = canvas.clientWidth;               // square via aspect-ratio
+  SIZE = Math.max(css, 10);
+  canvas.width = Math.round(SIZE * DPR);
+  canvas.height = Math.round(SIZE * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);       // draw in CSS pixels, crisp at any DPR
+}
+new ResizeObserver(fitCanvas).observe(canvas);
+
+/* palette */
+const EMBER = "#ff6b1a", EMBER_HI = "#ffb066", EMBER_LO = "#c33e00";
+const CARBON_RING = "rgba(120,124,134,0.28)", CARBON_DIM = "rgba(120,124,134,0.13)";
+
+/* per-state motion signature:
+   speed  — global rotation multiplier
+   energy — glow + core intensity 0..1
+   pulse  — breathing amplitude
+   sparks — orbiting particles (thinking/working)
+   strobe — outer ring flash (asking) */
+const MOTION = {
+  starting:     { speed: .35, energy: .25, pulse: .35, sparks: 0,  strobe: false },
+  idle:         { speed: .22, energy: .30, pulse: .28, sparks: 0,  strobe: false },
+  listening:    { speed: .55, energy: .85, pulse: 1.0, sparks: 0,  strobe: false },
+  transcribing: { speed: .90, energy: .70, pulse: .55, sparks: 5,  strobe: false },
+  thinking:     { speed: 1.5, energy: .75, pulse: .35, sparks: 9,  strobe: false },
+  working:      { speed: 1.5, energy: .75, pulse: .35, sparks: 9,  strobe: false },
+  asking:       { speed: .45, energy: .95, pulse: .85, sparks: 0,  strobe: true  },
+  speaking:     { speed: .70, energy: .90, pulse: .70, sparks: 0,  strobe: false },
+  offline:      { speed: .05, energy: .06, pulse: .05, sparks: 0,  strobe: false },
 };
+let motion = MOTION.starting, motionTarget = MOTION.starting;
+let level = { speed:.35, energy:.25, pulse:.35, sparks:0 }; // eased live values
 
-/* ── ring system ─────────────────────────────────────────────
-   Radii are fractions of the HUD radius, ordered inner to outer. Each
-   layer turns at its own rate and direction; that differential is what
-   makes the assembly read as machinery rather than a spinning picture.
-
-   Tick `len` is a fraction of the HUD radius, like `r`, so a band's reach is
-   always spaced against its neighbours. Sizing ticks in their own units let
-   bands grow into each other at some window sizes and the whole thing
-   collapsed into one grey mass — the reference reads as separate concentric
-   bands, and the gaps are what make that legible. */
+/* ring recipe: [kind, radius0..1, width, count/length, speed, alpha] */
 const RINGS = [
-  { type: "ring",  r: 0.045, lw: 1.0, a: 0.6 },
-  { type: "arcs",  r: 0.070, lw: 2.2, a: 1.0,  spin: -0.7, gaps: [[0, 140], [190, 95]] },
-  { type: "ring",  r: 0.095, lw: 0.8, a: 0.42 },
-  { type: "arcs",  r: 0.120, lw: 2.6, a: 0.92,  spin: 0.5, gaps: [[30, 110], [200, 70], [300, 25]] },
-  { type: "ticks", r: 0.150, lw: 1.0, a: 0.92,  n: 80,  len: 0.048, spin: -0.35, spec: 1.0, seed: 3 },
-  { type: "ring",  r: 0.225, lw: 1.3, a: 0.62 },
-  { type: "arcs",  r: 0.248, lw: 1.1, a: 0.7, spin: 0.9, gaps: [[15, 80], [130, 55], [230, 100]] },
-  { type: "ticks", r: 0.280, lw: 1.0, a: 1.0,  n: 128, len: 0.080, spin: 0.28, spec: 1.0, seed: 11 },
-  { type: "arcs",  r: 0.392, lw: 3.2, a: 0.88, spin: -0.42, gaps: [[45, 120], [210, 85]] },
-  { type: "dots",  r: 0.424, n: 72, dot: 1.1, a: 0.55, spin: -0.6 },
-  { type: "ticks", r: 0.460, lw: 1.2, a: 0.95, n: 168, len: 0.135, spin: -0.18, spec: 1.0, seed: 23 },
-  { type: "ring",  r: 0.618, lw: 0.7, a: 0.36 },
-  { type: "arcs",  r: 0.640, lw: 1.0, a: 0.65,  spin: 0.62, gaps: [[0, 65], [95, 140], [265, 60]] },
-  { type: "ticks", r: 0.690, lw: 0.8, a: 0.75,  n: 216, len: 0.092, spin: 0.14, spec: 0.75, seed: 37 },
-  { type: "ring",  r: 0.815, lw: 0.6, a: 0.28 },
-  { type: "arcs",  r: 0.850, lw: 1.5, a: 0.55,  spin: -0.25, gaps: [[70, 150], [250, 90]] },
+  ["ring",  .995, 1.2, 0,   0,    .55],
+  ["ticks", .955, 1.0, 96,  .05,  .50],
+  ["arc",   .905, 2.6, .62, -.12, .85],
+  ["arc",   .905, 2.6, .18,  .21, .55],
+  ["ring",  .845, 0.8, 0,   0,    .30],
+  ["ticks", .800, 2.2, 24,  -.08, .65],
+  ["arc",   .735, 4.0, .40,  .16, .95],
+  ["arc",   .735, 1.4, .78, -.07, .40],
+  ["dots",  .655, 2.6, 14,   .10, .80],
+  ["ring",  .600, 0.8, 0,   0,    .28],
+  ["arc",   .545, 6.0, .30, -.22, 1.0],
+  ["ticks", .480, 1.0, 60,   .13, .45],
+  ["arc",   .425, 2.0, .55,  .30, .75],
+  ["dots",  .360, 1.8, 8,   -.18, .65],
 ];
+let noiseSeed = Math.random() * 1000;
 
-const TAU = Math.PI * 2;
-const RAD = Math.PI / 180;
+function ease(cur, target, k) { return cur + (target - cur) * k; }
 
-/* Smooth 1-D value noise. The reference's tick bands look like a spectrum
-   analyser — coherent neighbours, not per-tick randomness — so the ticks are
-   sampled from a continuous curve rather than Math.random per tick. */
-function hash(n) {
-  const s = Math.sin(n * 127.1) * 43758.5453123;
-  return s - Math.floor(s);
-}
-function noise1(x) {
-  const i = Math.floor(x), f = x - i;
-  const u = f * f * (3 - 2 * f);
-  return hash(i) * (1 - u) + hash(i + 1) * u;
-}
+function drawOrb(tms) {
+  const t = tms / 1000;
+  /* ease live values toward the current state's signature */
+  level.speed  = ease(level.speed,  motionTarget.speed,  .06);
+  level.energy = ease(level.energy, motionTarget.energy, .08);
+  level.pulse  = ease(level.pulse,  motionTarget.pulse,  .08);
+  level.sparks = ease(level.sparks, motionTarget.sparks, .10);
 
-const canvas = document.getElementById("hud");
-const ctx = canvas.getContext ? canvas.getContext("2d") : null;
-if (!ctx) document.body.classList.add("no-canvas");
+  const w = SIZE, cx = w / 2, cy = w / 2;
+  const R = w * 0.46;
+  const breathe = 1 + Math.sin(t * 2.1) * 0.012 * level.pulse;
 
-let current = { ...STATES.starting };
-let target = { ...STATES.starting };
-let dpr = 1;
+  ctx.clearRect(0, 0, w, w);
 
-function resize() {
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-  }
-}
+  /* ambient coal glow floor */
+  let g = ctx.createRadialGradient(cx, cy, R * .1, cx, cy, R * 1.05);
+  g.addColorStop(0, `rgba(255,107,26,${0.10 * level.energy})`);
+  g.addColorStop(.55, `rgba(195,62,0,${0.05 * level.energy})`);
+  g.addColorStop(1, "transparent");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, w);
 
-function stroke(alpha, width, light) {
-  const s = current.sat;
-  ctx.strokeStyle = `hsla(${current.hue}, ${s}%, ${light}%, ${alpha})`;
-  ctx.lineWidth = width;
-}
+  /* instrument rings */
+  for (const [kind, r0, lw, n, sp, alpha] of RINGS) {
+    const r = R * r0 * breathe;
+    const rot = t * sp * level.speed * Math.PI * 2;
+    const hot = alpha * (0.35 + 0.65 * level.energy);
+    ctx.lineWidth = lw;
 
-function drawRing(cfg, R) {
-  ctx.beginPath();
-  ctx.arc(0, 0, cfg.r * R, 0, TAU);
-  stroke(cfg.a, cfg.lw, 92);
-  ctx.stroke();
-}
-
-function drawArcs(cfg, R, t) {
-  const rot = t * (cfg.spin || 0);
-  stroke(cfg.a, cfg.lw, 95);
-  ctx.lineCap = "butt";
-  for (const [start, sweep] of cfg.gaps) {
-    ctx.beginPath();
-    ctx.arc(0, 0, cfg.r * R, start * RAD + rot, (start + sweep) * RAD + rot);
-    ctx.stroke();
-  }
-}
-
-function drawDots(cfg, R, t) {
-  const rot = t * (cfg.spin || 0);
-  ctx.fillStyle = `hsla(${current.hue}, ${current.sat}%, 90%, ${cfg.a})`;
-  for (let i = 0; i < cfg.n; i++) {
-    const a = (i / cfg.n) * TAU + rot;
-    ctx.beginPath();
-    ctx.arc(Math.cos(a) * cfg.r * R, Math.sin(a) * cfg.r * R, cfg.dot * dpr, 0, TAU);
-    ctx.fill();
-  }
-}
-
-function drawTicks(cfg, R, t) {
-  const rot = t * (cfg.spin || 0);
-  // A little bloom on the spectrum bands. The reference glows; hairlines on
-  // black without it read as grey rather than lit.
-  ctx.shadowBlur = 6 * dpr;
-  ctx.shadowColor = `hsla(${current.hue}, ${current.sat}%, 70%, .55)`;
-  const r0 = cfg.r * R;
-  const maxLen = cfg.len * R;
-  ctx.lineCap = "butt";
-  ctx.beginPath();
-  for (let i = 0; i < cfg.n; i++) {
-    const a = (i / cfg.n) * TAU + rot;
-    // Two sampling rates beat together so the band never looks like it is
-    // simply repeating, which is what the reference's bands do.
-    const wobble = noise1(i * 0.11 + cfg.seed + t * 1.5) * 0.75
-                 + noise1(i * 0.37 + cfg.seed * 2 - t * 0.8) * 0.25;
-    // Wide dynamic range: the jagged silhouette is the whole character of
-    // these bands. A narrow range renders as a flat grey annulus.
-    const amp = 0.12 + wobble * 0.88 * (0.25 + 0.75 * current.energy) * cfg.spec;
-    const len = maxLen * Math.min(amp, 1);
-    const c = Math.cos(a), s = Math.sin(a);
-    ctx.moveTo(c * r0, s * r0);
-    ctx.lineTo(c * (r0 + len), s * (r0 + len));
-  }
-  stroke(cfg.a, cfg.lw, 97);
-  ctx.stroke();
-  ctx.shadowBlur = 0;   // never leak the glow onto the plain rings
-}
-
-function drawCore(R, t) {
-  // Crisp, not glowing. A soft bloom here swallowed the inner rings and read
-  // as a different object entirely from the reference's nested circles; the
-  // only lit element is a small centre that breathes while speaking, so a
-  // reply is visible without reading the caption.
-  const beat = 1 + current.pulse * Math.sin(t * 4.5) * 0.22;
-  ctx.fillStyle = `hsla(${current.hue}, ${current.sat}%, 92%, .9)`;
-  ctx.beginPath();
-  ctx.arc(0, 0, R * 0.016 * beat, 0, TAU);
-  ctx.fill();
-
-  const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.11);
-  halo.addColorStop(0, `hsla(${current.hue}, ${current.sat}%, 80%, .22)`);
-  halo.addColorStop(1, `hsla(${current.hue}, ${current.sat}%, 70%, 0)`);
-  ctx.fillStyle = halo;
-  ctx.beginPath();
-  ctx.arc(0, 0, R * 0.11, 0, TAU);
-  ctx.fill();
-}
-
-const lerp = (a, b, k) => a + (b - a) * k;
-let spinPhase = 0;
-let lastMs = 0;
-
-function frame(ms) {
-  requestAnimationFrame(frame);
-  if (!ctx) return;
-  resize();
-
-  const dt = Math.min((ms - lastMs) / 1000, 0.1) || 0;
-  lastMs = ms;
-  const k = 0.05;                       // ease between states, never snap
-  for (const p of ["hue", "sat", "spin", "energy", "pulse"]) {
-    current[p] = lerp(current[p], target[p], k);
-  }
-  // Integrate rotation so a change of speed never jumps the rings' position.
-  spinPhase += dt * current.spin;
-  const t = ms / 1000;
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-
-  const R = Math.min(canvas.width, canvas.height) * 0.42;
-  drawCore(R, t);
-  for (const cfg of RINGS) {
-    if (cfg.type === "ring") drawRing(cfg, R);
-    else if (cfg.type === "arcs") drawArcs(cfg, R, spinPhase);
-    else if (cfg.type === "dots") drawDots(cfg, R, spinPhase);
-    else if (cfg.type === "ticks") drawTicks(cfg, R, spinPhase + t * 0.0001);
-  }
-}
-requestAnimationFrame(frame);
-
-/* ── state + activity ──────────────────────────────────────── */
-const stateEl = document.getElementById("state");
-const detailEl = document.getElementById("detail");
-const feedEl = document.getElementById("feed");
-const liveEl = document.getElementById("live");
-const liveText = document.getElementById("livetext");
-
-function applyState(msg) {
-  const key = STATES[msg.state] ? msg.state : "idle";
-  const s = STATES[key];
-  target = { ...s };
-  stateEl.textContent = s.label;
-  stateEl.style.color = `hsl(${s.hue}, ${s.sat}%, 78%)`;
-  detailEl.textContent = msg.detail
-    ? ((msg.state === "thinking") ? "“" + msg.detail + "”" : msg.detail)
-    : "";
-}
-
-/* Built with textContent throughout. Tool names and details reach this page
-   from the audit log, which carries text Jarvis read out of documents, mail
-   and chat — none of it can be trusted as markup. */
-function addActivity(a, atEnd) {
-  const empty = feedEl.querySelector(".empty");
-  if (empty) empty.remove();
-
-  const row = document.createElement("div");
-  row.className = "row"
-    + (a.ok === false ? " bad" : "")
-    + (a.decision === "confirmed" || a.decision === "ok" ? " ok" : "");
-
-  const time = document.createElement("div");
-  time.className = "t";
-  time.textContent = a.ts || "";
-
-  const right = document.createElement("div");
-  const what = document.createElement("div");
-  what.append(document.createTextNode((a.verb || a.event || "") + " "));
-  const tool = document.createElement("b");
-  tool.textContent = a.tool || "";
-  what.append(tool);
-  if (a.decision) {
-    const badge = document.createElement("span");
-    badge.className = "badge";
-    badge.textContent = a.decision;
-    what.append(badge);
-  }
-  right.append(what);
-
-  if (a.detail) {
-    const d = document.createElement("div");
-    d.className = "d";
-    d.textContent = a.detail;
-    right.append(d);
+    if (kind === "ring") {
+      ctx.strokeStyle = CARBON_RING;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    } else if (kind === "ticks") {
+      ctx.strokeStyle = CARBON_RING;
+      for (let i = 0; i < n; i++) {
+        const a = rot + (i / n) * Math.PI * 2;
+        const flick = Math.sin(noiseSeed + i * 7.3 + t * 2.4);
+        ctx.globalAlpha = alpha * (0.35 + 0.4 * Math.max(0, flick));
+        const len = lw > 1.5 ? 7 : 4;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+        ctx.lineTo(cx + Math.cos(a) * (r - len), cy + Math.sin(a) * (r - len));
+        ctx.stroke();
+      }
+    } else if (kind === "arc") {
+      ctx.globalAlpha = hot;
+      ctx.strokeStyle = lw >= 3 ? EMBER : (lw >= 2 ? EMBER_LO : CARBON_RING);
+      ctx.shadowColor = EMBER;
+      ctx.shadowBlur = lw >= 3 ? 14 * level.energy : 5 * level.energy;
+      ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(cx, cy, r, rot, rot + Math.PI * 2 * n); ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else if (kind === "dots") {
+      ctx.fillStyle = EMBER_HI;
+      for (let i = 0; i < n; i++) {
+        const a = rot + (i / n) * Math.PI * 2;
+        ctx.globalAlpha = hot * (0.4 + 0.6 * Math.abs(Math.sin(t * 1.7 + i)));
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, lw, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
-  row.append(time, right);
-  if (atEnd) feedEl.appendChild(row); else feedEl.prepend(row);
+  /* thinking sparks: embers orbiting fast between the mid rings */
+  const sparkN = Math.round(level.sparks);
+  if (sparkN > 0) {
+    ctx.fillStyle = EMBER_HI;
+    for (let i = 0; i < sparkN; i++) {
+      const a = t * (1.3 + (i % 4) * .5) * level.speed * 2 + i * 2.4;
+      const rr = R * (0.30 + 0.28 * ((i * 37 % 100) / 100));
+      ctx.globalAlpha = .5 + .5 * Math.sin(t * 5 + i * 2);
+      ctx.shadowColor = EMBER; ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  /* asking strobe: the outer ring flashes ember so a pending question is
+     visible even from peripheral vision */
+  if (motionTarget.strobe) {
+    const s = 0.5 + 0.5 * Math.sin(t * 4.2);
+    ctx.globalAlpha = .25 + .55 * s;
+    ctx.strokeStyle = EMBER; ctx.lineWidth = 2.4;
+    ctx.shadowColor = EMBER; ctx.shadowBlur = 22;
+    ctx.beginPath(); ctx.arc(cx, cy, R * .995, 0, Math.PI * 2); ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  /* molten core */
+  const coreR = R * (0.16 + 0.035 * Math.sin(t * 2.6) * level.pulse);
+  g = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.6);
+  g.addColorStop(0, `rgba(255,225,190,${0.95 * level.energy})`);
+  g.addColorStop(.25, `rgba(255,176,102,${0.75 * level.energy})`);
+  g.addColorStop(.55, `rgba(255,107,26,${0.38 * level.energy})`);
+  g.addColorStop(1, "transparent");
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, coreR * 2.6, 0, Math.PI * 2); ctx.fill();
+  /* crisp centre */
+  ctx.fillStyle = `rgba(255,240,220,${0.75 + 0.25 * level.energy})`;
+  ctx.beginPath(); ctx.arc(cx, cy, coreR * .45, 0, Math.PI * 2); ctx.fill();
+
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(drawOrb);
 }
+requestAnimationFrame((t) => { fitCanvas(); drawOrb(t); });
 
-/* ── live (served by Jarvis) vs demo (static hosting) ──────── */
-const LOCAL = location.protocol === "http:"
-  && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+/* ======================================================================
+   State + conversation plumbing
+   ====================================================================== */
+const $ = (id) => document.getElementById(id);
+const LABELS = {
+  starting:     ["Starting up", true],
+  idle:         ["", false],                 // filled with the wake phrase
+  listening:    ["Listening", false],
+  transcribing: ["Heard you — writing it down", true],
+  thinking:     ["Thinking", true],
+  working:      ["Working", true],
+  speaking:     ["Speaking", false],
+  offline:      ["Offline", false],
+};
+let wakePhrase = "…", currentState = "starting", promptActive = false;
 
-/* ── talking to it: typed requests, push-to-talk, answering ── */
-const chatEl = document.getElementById("chat");
-const sayEl = document.getElementById("say");
-const sendBtn = document.getElementById("send");
-const talkBtn = document.getElementById("talk");
-const askEl = document.getElementById("ask");
-const askTextEl = document.getElementById("askText");
-const hintEl = document.getElementById("hint");
+function setState(state, detail) {
+  currentState = state;
+  const effective = promptActive ? "asking" : state;
+  motionTarget = MOTION[effective] || MOTION.idle;
+
+  const label = $("state-label");
+  label.classList.toggle("asking", promptActive);
+  if (promptActive) {
+    label.textContent = "Waiting for your answer";
+  } else {
+    const [text, dots] = LABELS[state] || ["Working", true];
+    label.textContent = state === "idle" ? `Say “${wakePhrase}”` : text;
+    label.classList.toggle("dots", !!dots && state !== "idle");
+  }
+  if (!promptActive) $("state-detail").textContent = detail || "";
+  $("offline-veil").classList.toggle("show", state === "offline");
+}
 
 function addMessage(role, text) {
   const div = document.createElement("div");
   div.className = "msg " + (role === "you" ? "you" : "jarvis");
-  div.textContent = text;              // never markup: this is model output
-  chatEl.append(div);
-  chatEl.scrollTop = chatEl.scrollHeight;
-  return div;
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = role === "you" ? "You" : "Jarvis";
+  const body = document.createElement("span");
+  body.textContent = text;                       // textContent, always
+  div.append(who, body);
+  const convo = $("convo");
+  convo.insertBefore(div, $("draft"));
+  convo.scrollTop = convo.scrollHeight;
 }
 
-let thinkingEl = null;
-function showThinking(on) {
-  if (on && !thinkingEl) {
-    thinkingEl = addMessage("jarvis", "");
-    thinkingEl.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
-  } else if (!on && thinkingEl) {
-    thinkingEl.remove();
-    thinkingEl = null;
-  }
+function setPrompt(prompt) {
+  promptActive = !!prompt;
+  $("ask-q").textContent = prompt || "";
+  $("ask").classList.toggle("show", promptActive);
+  if (promptActive) { $("convo").scrollTop = $("convo").scrollHeight; }
+  setState(currentState, $("state-detail").textContent);
 }
 
-function showPrompt(prompt) {
-  // A permission or confirmation question routed here because the request
-  // was typed — someone who typed may not be able to answer out loud.
-  askEl.hidden = !prompt;
-  askTextEl.textContent = prompt || "";
-  if (prompt) chatEl.scrollTop = chatEl.scrollHeight;
+function setDraft(title, text) {
+  const show = !!(title || text);
+  $("draft-title").textContent = title || "";
+  $("draft-body").textContent = text || "";
+  $("draft").classList.toggle("show", show);
+  if (show) $("convo").scrollTop = $("convo").scrollHeight;
 }
 
-async function post(path, body) {
+function addActivity(a) {
+  const row = document.createElement("div");
+  row.className = "act" + (a.ok ? "" : " bad");
+  const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = a.ts;
+  const verb = document.createElement("span"); verb.textContent = a.verb;
+  const tool = document.createElement("span"); tool.className = "tool";
+  tool.textContent = a.tool || "";
+  const det = document.createElement("span"); det.textContent = a.detail || "";
+  row.append(ts, verb, tool, det);
+  const list = $("act-list");
+  list.prepend(row);
+  while (list.childElementCount > 80) list.lastChild.remove();
+}
+
+/* -- websocket, self-healing ------------------------------------------- */
+let ws = null;
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "snapshot") {
+      wakePhrase = m.wake_phrase || "Hey Jarvis";
+      $("wake").textContent = `“${wakePhrase}”`;
+      $("act-list").replaceChildren();
+      (m.activity || []).forEach(addActivity);
+      document.querySelectorAll(".msg").forEach(n => n.remove());
+      (m.transcript || []).forEach(x => addMessage(x.role, x.text));
+      setDraft((m.draft || {}).title, (m.draft || {}).text);
+      setPrompt(m.prompt || "");
+      setState(m.state.state, m.state.detail);
+    } else if (m.type === "state") setState(m.state, m.detail);
+    else if (m.type === "message") addMessage(m.role, m.text);
+    else if (m.type === "prompt") setPrompt(m.prompt);
+    else if (m.type === "draft") setDraft(m.title, m.text);
+    else if (m.type === "activity") addActivity(m);
+  };
+  ws.onclose = () => { setState("offline", ""); setTimeout(connect, 1500); };
+  ws.onerror = () => ws.close();
+}
+connect();
+setInterval(() => { if (ws && ws.readyState === 1) ws.send("ping"); }, 25000);
+
+/* -- controls ----------------------------------------------------------- */
+async function post(path, payload) {
   try {
     const r = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {}),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
     });
-    return r.ok ? null : (await r.json().catch(() => ({}))).error || "failed";
-  } catch (e) {
-    return "no connection";
-  }
+    return r.ok;
+  } catch { return false; }
 }
 
-async function send() {
-  const text = sayEl.value.trim();
+$("send").onclick = () => {
+  const text = $("say").value.trim();
   if (!text) return;
-  sayEl.value = "";
-  sayEl.style.height = "auto";
-  sendBtn.disabled = true;
-  showThinking(true);
-  const err = await post("/ask", { text });
-  sendBtn.disabled = false;
-  if (err) {
-    showThinking(false);
-    hintEl.textContent = err === "busy"
-      ? "Jarvis is mid-task — wait for it to finish, then try again."
-      : "Couldn't send that: " + err;
-    setTimeout(() => { hintEl.textContent = "Enter sends · Shift+Enter for a new line"; }, 4000);
+  $("say").value = "";
+  post("/ask", { text });
+};
+$("say").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("send").click(); }
+});
+$("talk").onclick = () => post("/listen");
+$("quit").onclick = () => { if (confirm("Stop Jarvis?")) post("/quit"); };
+
+$("yes").onclick = () => { post("/answer", { answer: "yes" }); setPrompt(""); };
+$("no").onclick  = () => { post("/answer", { answer: "no" });  setPrompt(""); };
+$("ask-free").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const answer = $("ask-free").value.trim();
+    if (!answer) return;
+    $("ask-free").value = "";
+    post("/answer", { answer });
+    setPrompt("");
   }
-}
-
-if (sayEl) {
-  sayEl.addEventListener("input", () => {
-    sayEl.style.height = "auto";
-    sayEl.style.height = Math.min(sayEl.scrollHeight, 112) + "px";
-  });
-  sayEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-  });
-  sendBtn.addEventListener("click", send);
-  talkBtn.addEventListener("click", async () => {
-    // Push-to-talk: record one utterance with no wake word, for anyone the
-    // wake word does not reliably hear.
-    talkBtn.classList.add("on");
-    const err = await post("/listen", {});
-    if (err) {
-      talkBtn.classList.remove("on");
-      hintEl.textContent = err === "voice unavailable"
-        ? "Voice isn't running — start Jarvis with the microphone enabled."
-        : "Couldn't start listening: " + err;
-      setTimeout(() => { hintEl.textContent = "Enter sends · Shift+Enter for a new line"; }, 4000);
-    }
-  });
-  document.getElementById("askYes").addEventListener("click", async () => {
-    showPrompt(""); await post("/answer", { answer: "yes" });
-  });
-  document.getElementById("askNo").addEventListener("click", async () => {
-    showPrompt(""); await post("/answer", { answer: "no" });
-  });
-}
-
-if (LOCAL) {
-  document.getElementById("composer").hidden = false;
-  // Launched from the desktop shortcut there is no terminal to Ctrl+C, so
-  // the page has to be able to stop the assistant.
-  const quitBtn = document.getElementById("quit");
-  quitBtn.hidden = false;
-  quitBtn.addEventListener("click", async () => {
-    quitBtn.disabled = true;
-    quitBtn.textContent = "Stopping…";
-    try { await fetch("/quit", { method: "POST" }); } catch (e) { /* died mid-reply */ }
-    applyState({ state: "offline", detail: "Jarvis has stopped. You can close this window." });
-    setTimeout(() => window.close(), 800);
-  });
-
-  let keepalive = null;
-  (function connect() {
-    const ws = new WebSocket(`ws://${location.host}/ws`);
-    ws.onopen = () => { liveEl.classList.remove("down"); liveText.textContent = "live"; };
-    ws.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      if (m.type === "snapshot") {
-        if (m.wake_phrase) STATES.idle.label = 'say “' + m.wake_phrase + '”';
-        applyState(m.state || {});
-        (m.activity || []).forEach(a => addActivity(a, true));
-        chatEl.textContent = "";
-        (m.transcript || []).forEach(t => addMessage(t.role, t.text));
-        showPrompt(m.prompt || "");
-      } else if (m.type === "activity") {
-        addActivity(m, false);
-      } else if (m.type === "message") {
-        showThinking(false);
-        addMessage(m.role, m.text);
-        if (m.role === "you") showThinking(true);
-      } else if (m.type === "prompt") {
-        showPrompt(m.prompt || "");
-      } else {
-        applyState(m);
-        // The loader belongs to work in progress, not to idling.
-        if (["idle", "offline"].includes(m.state)) showThinking(false);
-        talkBtn.classList.toggle("on", m.state === "listening");
-      }
-    };
-    ws.onclose = () => {
-      applyState({ state: "offline", detail: "Jarvis is not running" });
-      liveEl.classList.add("down");
-      liveText.textContent = "disconnected";
-      clearInterval(keepalive);
-      setTimeout(connect, 2000);
-    };
-    clearInterval(keepalive);
-    keepalive = setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 20000);
-  })();
-} else {
-  // Static hosting: nothing to connect to, so walk the states on a loop.
-  // Deliberately generic — no real names, mail or company data on a public page.
-  document.getElementById("note").textContent = "DEMO · the real HUD runs on your own machine";
-  liveText.textContent = "demo";
-  const script = [
-    { state: "idle",         detail: "",                                             wait: 3400 },
-    { state: "listening",    detail: "",                                             wait: 2800 },
-    { state: "transcribing", detail: "",                                             wait: 1200 },
-    { state: "thinking",     detail: "kal ki meeting kis time par hai?",              wait: 2600,
-      act: { ts: "10:24:02", verb: "used", tool: "list_calendar_events", decision: "ok" } },
-    { state: "speaking",     detail: "Tomorrow you have two meetings — 11:00 and 15:30.", wait: 3400 },
-    { state: "idle",         detail: "",                                             wait: 2400 },
-    { state: "listening",    detail: "",                                             wait: 2200 },
-    { state: "thinking",     detail: "send that summary to the plant lead",           wait: 2200,
-      act: { ts: "10:25:41", verb: "asked you to confirm", tool: "send_email", decision: "confirmed" } },
-    { state: "speaking",     detail: "Sent.",                                        wait: 2200,
-      act: { ts: "10:25:44", verb: "used", tool: "send_email", decision: "ok" } },
-  ];
-  let i = 0;
-  (function step() {
-    const s = script[i % script.length];
-    applyState(s);
-    if (s.act) addActivity({ ...s.act, ok: true }, false);
-    i++;
-    setTimeout(step, s.wait);
-  })();
-}
+});
 </script>
 </body>
 </html>

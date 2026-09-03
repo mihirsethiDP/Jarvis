@@ -24,13 +24,13 @@ import threading
 
 _STATE_STYLE = {
     #  label            dot colour   show the loader
-    "starting":     ("Starting…",    "#8a94a6", True),
-    "idle":         ("Say “Hey Jarvis”", "#38bdf8", False),
-    "listening":    ("Listening…",   "#22d3ee", False),
-    "transcribing": ("Heard you — writing it down", "#a78bfa", True),
-    "thinking":     ("Working…",     "#fbbf24", True),
-    "working":      ("Working…",     "#fbbf24", True),
-    "speaking":     ("Speaking",     "#34d399", False),
+    "starting":     ("Starting…",    "#8b8f98", True),
+    "idle":         ("Say “Hey Jarvis”", "#ff6b1a", False),
+    "listening":    ("Listening…",   "#ffb066", False),
+    "transcribing": ("Heard you — writing it down", "#ffb066", True),
+    "thinking":     ("Working…",     "#ff6b1a", True),
+    "working":      ("Working…",     "#ff6b1a", True),
+    "speaking":     ("Speaking",     "#57c78a", False),
     "offline":      ("Offline",      "#ef4444", False),
 }
 
@@ -44,7 +44,7 @@ class Overlay:
     def __init__(self, port: int = 8763, on_listen=None, wake_phrase: str = "Hey Jarvis"):
         # The idle label must follow the configured wake word — telling the
         # user to say "Hey Jarvis" while Jarvis listens for "Alexa" is a trap.
-        _STATE_STYLE["idle"] = (f"Say “{wake_phrase}”", "#38bdf8", False)
+        _STATE_STYLE["idle"] = (f"Say “{wake_phrase}”", "#ff6b1a", False)
         self._q: queue.Queue = queue.Queue()
         self._port = port
         self._on_listen = on_listen
@@ -115,7 +115,7 @@ class Overlay:
         self._root = tk.Tk()
         self._root.overrideredirect(True)          # no title bar
         self._root.attributes("-topmost", True)
-        self._root.configure(bg="#05070d")
+        self._root.configure(bg="#0e1013")
         try:
             self._root.attributes("-alpha", 0.94)
         except Exception:
@@ -127,24 +127,24 @@ class Overlay:
         y = screen_h - _HEIGHT - _MARGIN - 48     # clear of the taskbar
         self._root.geometry(f"{_WIDTH}x{_HEIGHT}+{x}+{y}")
 
-        frame = tk.Frame(self._root, bg="#05070d", highlightthickness=1,
-                         highlightbackground="#1b2540")
+        frame = tk.Frame(self._root, bg="#0e1013", highlightthickness=1,
+                         highlightbackground="#3a2415")
         frame.pack(fill="both", expand=True)
 
-        self._dot = tk.Canvas(frame, width=14, height=14, bg="#05070d",
+        self._dot = tk.Canvas(frame, width=14, height=14, bg="#0e1013",
                               highlightthickness=0)
         self._dot.place(x=12, y=12)
-        self._dot_id = self._dot.create_oval(2, 2, 12, 12, fill="#38bdf8", outline="")
+        self._dot_id = self._dot.create_oval(2, 2, 12, 12, fill="#ff6b1a", outline="")
 
-        self._label = tk.Label(frame, text="Starting…", bg="#05070d", fg="#d3dcef",
+        self._label = tk.Label(frame, text="Starting…", bg="#0e1013", fg="#e8e6e1",
                                font=("Segoe UI", 10, "bold"), anchor="w")
         self._label.place(x=34, y=9, width=200)
 
-        self._detail = tk.Label(frame, text="", bg="#05070d", fg="#78859c",
+        self._detail = tk.Label(frame, text="", bg="#0e1013", fg="#8b8f98",
                                 font=("Segoe UI", 8), anchor="w", justify="left")
         self._detail.place(x=34, y=30, width=_WIDTH - 46)
 
-        talk = tk.Label(frame, text="Talk", bg="#0c1526", fg="#9fb0c9",
+        talk = tk.Label(frame, text="Talk", bg="#22150b", fg="#ffb066",
                         font=("Segoe UI", 8), padx=8, pady=3, cursor="hand2")
         talk.place(x=_WIDTH - 52, y=9)
         talk.bind("<Button-1>", lambda _e: self._talk())
@@ -208,7 +208,7 @@ class Overlay:
 
     def _apply(self, state: str, detail: str) -> None:
         label, colour, loading = _STATE_STYLE.get(
-            state, ("Working…", "#fbbf24", True))
+            state, ("Working…", "#ff6b1a", True))
         self._base_label = label.rstrip("…")
         self._loading = loading
         self._label.config(text=label, fg="#d3dcef")

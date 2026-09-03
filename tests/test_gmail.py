@@ -362,3 +362,32 @@ def test_trash_still_asks(tmp_path, audit):
     assert "Cancelled" in out
     assert any("Please confirm" in q for q in ctx.confirmer.io.asked), (
         "trash moves mail out of sight — it asks")
+
+
+def test_send_email_previews_draft_and_speaks_short(tmp_path, audit):
+    # With a HUD attached the full body goes on screen and the spoken
+    # confirmation is one short question — reciting the whole email through
+    # TTS was most of the cost of confirming a send.
+    service = MagicMock()
+    ctx = make_ctx(tmp_path, audit, ["allow once", "yes"], service)
+    shown, cleared = [], []
+    ctx.preview = lambda title, text: shown.append((title, text))
+    ctx.clear_preview = lambda: cleared.append(True)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    tools["send_email"]("client@x.com", "Payment Follow-up",
+                        "Dear Sir,\n\nlong body " * 30)
+    assert shown and shown[0][0].startswith("Draft to client@x.com")
+    assert "long body" in shown[0][1]
+    assert cleared, "the draft card must not outlive the confirmation"
+    question = next(q for q in ctx.confirmer.io.asked if "confirm" in q.lower())
+    assert "is on your screen" in question
+    assert "long body" not in question, "the body must not be recited aloud"
+
+
+def test_send_email_without_ui_still_reads_the_preview(tmp_path, audit):
+    service = MagicMock()
+    ctx = make_ctx(tmp_path, audit, ["allow once", "no"], service)
+    tools = {t.name: t for t in gmail_mod.build_tools(ctx)}
+    tools["send_email"]("client@x.com", "Subj", "the body text")
+    question = next(q for q in ctx.confirmer.io.asked if "confirm" in q.lower())
+    assert "the body text" in question, "voice-only users must still hear it"

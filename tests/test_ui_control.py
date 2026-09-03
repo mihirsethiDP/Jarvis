@@ -121,3 +121,25 @@ def test_a_second_request_while_busy_is_refused_not_queued():
     s = StateServer(port=8763, on_ask=lambda t: False)
     client = TestClient(s._app)
     assert client.post("/ask", json={"text": "hi"}, headers=GOOD).status_code == 409
+
+
+def test_draft_channel_persists_into_snapshot():
+    # A draft shown before a confirmation must also reach a page opened
+    # mid-question, so it rides in the snapshot until cleared.
+    from jarvis.ui.server import StateServer
+
+    srv = StateServer(port=0)
+    srv.publish_draft("Draft to a@b.com — Hello", "Dear Sir,\n\nBody here.")
+    assert srv._pending_draft["title"].startswith("Draft to a@b.com")
+    assert "Body here" in srv._pending_draft["text"]
+    srv.clear_draft()
+    assert srv._pending_draft == {}
+
+
+def test_draft_is_capped_not_crashed():
+    from jarvis.ui.server import StateServer
+
+    srv = StateServer(port=0)
+    srv.publish_draft("t" * 999, "x" * 99_999)
+    assert len(srv._pending_draft["title"]) == 200
+    assert len(srv._pending_draft["text"]) == 8000

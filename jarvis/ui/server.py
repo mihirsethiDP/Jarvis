@@ -41,6 +41,7 @@ class StateServer:
         # The typed conversation, replayed to a page opened mid-session.
         self._transcript: deque[dict] = deque(maxlen=60)
         self._pending_prompt = ""
+        self._pending_draft: dict = {}
         self._clients: list[WebSocket] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app = self._build_app()
@@ -136,6 +137,7 @@ class StateServer:
                     "activity": list(self._activity),
                     "transcript": list(self._transcript),
                     "prompt": self._pending_prompt,
+                    "draft": self._pending_draft,
                     "wake_phrase": self.wake_phrase,
                 })
                 while True:
@@ -183,6 +185,18 @@ class StateServer:
     def clear_prompt(self) -> None:
         self._pending_prompt = ""
         self._send({"type": "prompt", "prompt": ""})
+
+    # -- draft preview ------------------------------------------------------
+    def publish_draft(self, title: str, text: str) -> None:
+        """Show outgoing content (an email draft, a long message) on the page
+        so the spoken confirmation can be one short question instead of a
+        recitation of the whole body."""
+        self._pending_draft = {"title": title[:200], "text": text[:8000]}
+        self._send({"type": "draft", **self._pending_draft})
+
+    def clear_draft(self) -> None:
+        self._pending_draft = {}
+        self._send({"type": "draft", "title": "", "text": ""})
 
     # -- activity feed ----------------------------------------------------
     _VERB = {
