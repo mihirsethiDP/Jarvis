@@ -279,8 +279,20 @@ def build_tools(ctx: ToolContext) -> list:
             return f"Directory lookup failed: {e}"
 
         if not matches:
+            near = []
+            try:
+                near = _directory.closest_names(_people(), person_name)
+            except Exception:
+                pass
             ctx.audit.record("tool_call", tool="find_direct_message",
                              detail=f"{person_name} -> no directory match", ok=False)
+            if near:
+                # STT rounds unfamiliar names to familiar ones ("Joshi" ->
+                # "Jyoti"). One short question recovers the whole request.
+                return (f"No one called '{person_name}' is in the directory, but it "
+                        f"sounds close to: {', '.join(near)}. Ask the user in ONE "
+                        f"short question (e.g. \"{near[0].split()[0]}?\"), then call "
+                        "this tool again with the confirmed name.")
             return (f"No one called '{person_name}' is in the company directory. "
                     "Ask the user for the person's full name or email address.")
         if len(matches) > 1:

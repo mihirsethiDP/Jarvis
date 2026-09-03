@@ -95,7 +95,11 @@ class SpeechDetector:
 
     def is_speech(self, block: np.ndarray, *, already_speaking: bool) -> bool:
         threshold = self.keep if already_speaking else self.start
-        return self.probability(block) >= threshold
+        # Kept for the recorder's adaptive endpoint: a tail whose peak
+        # probability stays near zero is silence the model is SURE about,
+        # and can end the utterance early.
+        self.last_probability = self.probability(block)
+        return self.last_probability >= threshold
 
 
 def try_build(enabled: bool = True) -> SpeechDetector | None:

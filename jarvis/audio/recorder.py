@@ -12,6 +12,11 @@ import numpy as np
 from .microphone import Microphone
 from .microphone import BLOCK_SIZE
 
+# Adaptive endpoint: end the utterance at the shorter window when the tail's
+# peak VAD probability stays under this — silence the model is sure about.
+_CONFIDENT_SILENCE_PROB = 0.12
+_CONFIDENT_SILENCE_SECONDS = 1.2
+
 _BLOCK_SECONDS = BLOCK_SIZE / 16000.0  # 32 ms
 # Shorter than any real word; guards against a cough being treated as speech.
 _SHORT_UTTERANCE_SECONDS = 0.18
@@ -37,7 +42,8 @@ class UtteranceRecorder:
         # RMS-energy path below, which cannot tell speech from a fan.
         self.detector = detector
 
-    def record(self, start_window: float | None = None) -> np.ndarray:
+    def record(self, start_window: float | None = None,
+               abort_event=None) -> np.ndarray:
         """Record one utterance; returns float32 mono 16 kHz audio (may be empty).
 
         The noise floor adapts only on *non-speech* blocks, and speech is
@@ -59,10 +65,15 @@ class UtteranceRecorder:
         noise_rms = 150.0  # prior on int16 scale; adapts to the room below
         speech_started = False
         silence_run = 0.0
+        tail_peak = 0.0
         speech_time = 0.0
         elapsed = 0.0
 
         while elapsed < self.max_seconds:
+            # Answered another way (a button on the HUD) — stop listening at
+            # once; the caller has its answer and this audio is abandoned.
+            if abort_event is not None and abort_event.is_set():
+                return np.zeros(0, dtype=np.float32)
             block = self.mic.read(timeout=1.0)
             if block is None:
                 elapsed += 1.0
@@ -94,11 +105,29 @@ class UtteranceRecorder:
                 speech_started = True
                 speech_time += _BLOCK_SECONDS
                 silence_run = 0.0
+                tail_peak = 0.0
             else:
                 # Exponential floor tracking, updated only when not speaking.
                 noise_rms = 0.9 * noise_rms + 0.1 * rms
                 if speech_started:
                     silence_run += _BLOCK_SECONDS
+                    tail_peak = max(
+                        tail_peak,
+                        getattr(self.detector, "last_probability", 1.0)
+                        if self.detector is not None else 1.0,
+                    )
+                    # Adaptive endpoint: the full silence window exists for
+                    # mid-sentence thinking pauses, where the VAD hovers in
+                    # the ambiguous zone. When the tail's PEAK speech
+                    # probability stays near zero, the model is certain no
+                    # one is talking — end 0.6s earlier. That 0.6s is paid on
+                    # every single interaction, so it is the cheapest latency
+                    # in the whole pipeline.
+                    if (self.detector is not None
+                            and tail_peak < _CONFIDENT_SILENCE_PROB
+                            and silence_run >= _CONFIDENT_SILENCE_SECONDS
+                            and speech_time >= self.min_speech_seconds):
+                        break
                     # A short burst followed by a pause is someone drawing
                     # breath before the real sentence, not a finished request.
                     if (silence_run >= self.silence_seconds

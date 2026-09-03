@@ -59,6 +59,11 @@ class JarvisApp:
         # .locked() before Python 3.14, which is what tells the page we are busy.
         self._agent_lock = threading.Lock()
         self._push_to_talk = threading.Event()
+        # A spoken question is mirrored to the HUD as Yes/No buttons; a click
+        # sets this event, aborts the microphone wait, and its answer wins.
+        self._ui_answer: str | None = None
+        self._ui_answer_event = threading.Event()
+        self._voice_ask_pending = False
         self._web_io = None
         self.overlay = None
 
@@ -222,7 +227,14 @@ class JarvisApp:
         return True
 
     def _answer_from_ui(self, answer: str) -> None:
-        self._web_io.deliver(answer)
+        if self._voice_ask_pending:
+            # The question was asked aloud; the user clicked instead of
+            # speaking. No one has time to dictate "yes" to a screen that
+            # has a Yes button on it.
+            self._ui_answer = answer
+            self._ui_answer_event.set()
+        else:
+            self._web_io.deliver(answer)
 
     def _narrate(self, phrase: str) -> None:
         """Say aloud what Jarvis is about to do.
@@ -336,6 +348,20 @@ class JarvisApp:
             audio = v["recorder"].record()
             return v["stt"].transcribe(audio)
 
+        def listen_for_answer() -> str:
+            self._ui_answer = None
+            self._ui_answer_event.clear()
+            self._voice_ask_pending = True
+            try:
+                v["mic"].drain()
+                audio = v["recorder"].record(abort_event=self._ui_answer_event)
+                if self._ui_answer is not None:
+                    return self._ui_answer
+                heard = v["stt"].transcribe(audio)
+                return self._ui_answer if self._ui_answer is not None else heard
+            finally:
+                self._voice_ask_pending = False
+
         def listen_short() -> str:
             from .security.confirm import _NO_WORDS, _is_yes
             from .security.permissions import normalize_answer
@@ -345,17 +371,32 @@ class JarvisApp:
                 return _is_yes(normalized) or any(
                     w in _NO_WORDS for w in normalized.split())
 
-            v["mic"].drain()
-            audio = v["recorder"].record(start_window=8)
-            # Tiny-model decodes are used only when they parse as a clear yes
-            # or no; anything else re-decodes on the accurate pipeline.
-            return v["stt"].transcribe_quick(audio, recognizer=clear_answer)
+            # Race the microphone against the HUD Yes/No buttons.
+            self._ui_answer = None
+            self._ui_answer_event.clear()
+            self._voice_ask_pending = True
+            try:
+                v["mic"].drain()
+                audio = v["recorder"].record(
+                    start_window=8, abort_event=self._ui_answer_event)
+                if self._ui_answer is not None:
+                    return self._ui_answer
+                heard = v["stt"].transcribe_quick(audio, recognizer=clear_answer)
+                # A click that landed while the decode ran beats a mumble.
+                return self._ui_answer if self._ui_answer is not None else heard
+            finally:
+                self._voice_ask_pending = False
 
         def speak(text: str) -> None:
             v["speaker"].say(text)
             v["mic"].drain()
 
-        return VoiceIO(speak=speak, listen=listen, listen_short=listen_short)
+        server = self.state_server
+        return VoiceIO(
+            speak=speak, listen=listen_for_answer, listen_short=listen_short,
+            on_prompt=None if server is None else server.publish_prompt,
+            on_prompt_done=None if server is None else server.clear_prompt,
+        )
 
     # ------------------------------------------------------------------
     def run(self) -> None:

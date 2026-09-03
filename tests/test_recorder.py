@@ -101,3 +101,60 @@ def test_a_cough_does_not_hold_the_microphone_open():
     levels = [2500] * seconds(0.12) + [40] * seconds(8.0)
     rec = UtteranceRecorder(FakeMic(levels), silence_seconds=1.8, max_seconds=20.0)
     assert rec.record().size == 0
+
+
+class _SureSilenceDetector:
+    """VAD stub: speech for the first N blocks, then certain silence."""
+
+    def __init__(self, speech_blocks, tail_prob):
+        self._n = speech_blocks
+        self._tail_prob = tail_prob
+        self.last_probability = 1.0
+        self._i = 0
+
+    def reset(self):
+        self._i = 0
+
+    def is_speech(self, block, *, already_speaking):
+        self._i += 1
+        speaking = self._i <= self._n
+        self.last_probability = 0.9 if speaking else self._tail_prob
+        return speaking
+
+
+def _mic_with_speech(seconds=8.0):
+    return FakeMic([3000.0] * int(seconds / 0.032))
+
+
+def test_confident_silence_ends_early():
+    # A dead-silent tail (VAD peak ~0) should endpoint at the short window,
+    # not the full one — that 0.6s is paid on every single interaction.
+    det = _SureSilenceDetector(speech_blocks=40, tail_prob=0.02)
+    rec = UtteranceRecorder(_mic_with_speech(), silence_seconds=1.8,
+                            min_speech_seconds=0.3, detector=det)
+    audio = rec.record()
+    seconds = len(audio) / 16000
+    speech = 40 * 0.032
+    tail = seconds - speech
+    assert 1.1 <= tail <= 1.5, f"tail was {tail:.2f}s — expected ~1.2s early end"
+
+
+def test_ambiguous_tail_keeps_the_full_window():
+    # A tail the VAD is unsure about (someone drawing breath) must wait the
+    # full window before ending — early endpointing is only for sure silence.
+    det = _SureSilenceDetector(speech_blocks=40, tail_prob=0.25)
+    rec = UtteranceRecorder(_mic_with_speech(), silence_seconds=1.8,
+                            min_speech_seconds=0.3, detector=det)
+    audio = rec.record()
+    tail = len(audio) / 16000 - 40 * 0.032
+    assert tail >= 1.7, f"tail was {tail:.2f}s — must respect the full window"
+
+
+def test_button_answer_aborts_the_microphone():
+    import threading
+
+    event = threading.Event()
+    event.set()
+    rec = UtteranceRecorder(_mic_with_speech(), detector=None)
+    audio = rec.record(abort_event=event)
+    assert audio.size == 0, "an already-answered question must not record"

@@ -112,25 +112,39 @@ class VoiceIO:
     """
 
     def __init__(self, speak: Callable[[str], None], listen: Callable[[], str],
-                 listen_short: Callable[[], str] | None = None):
+                 listen_short: Callable[[], str] | None = None,
+                 on_prompt: Callable[[str], None] | None = None,
+                 on_prompt_done: Callable[[], None] | None = None):
         self._speak = speak
         self._listen = listen
         # A cheaper listener for one-word answers; a confirmation should not
         # pay the full multilingual pipeline to understand "haan".
         self._listen_short = listen_short or listen
+        # Mirror spoken questions onto the HUD, where they render as Yes/No
+        # buttons. A click races the microphone; whichever answers first wins.
+        self._on_prompt = on_prompt or (lambda p: None)
+        self._on_prompt_done = on_prompt_done or (lambda: None)
 
     def say(self, text: str) -> None:
         print(f"\nJarvis: {text}")
         self._speak(text)
 
     def ask(self, prompt: str) -> str:
-        self.say(prompt)
-        heard = self._listen()
+        self._on_prompt(prompt)
+        try:
+            self.say(prompt)
+            heard = self._listen()
+        finally:
+            self._on_prompt_done()
         print(f"You: {heard}")
         return heard
 
     def ask_short(self, prompt: str) -> str:
-        self.say(prompt)
-        heard = self._listen_short()
+        self._on_prompt(prompt)
+        try:
+            self.say(prompt)
+            heard = self._listen_short()
+        finally:
+            self._on_prompt_done()
         print(f"You: {heard}")
         return heard

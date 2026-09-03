@@ -311,10 +311,10 @@ def build_tools(ctx: ToolContext) -> list:
             if attachment:
                 shown += f"\n\n[attachment: {attachment.name}]"
             ctx.preview(f"Draft to {to} — {subject}", shown)
-            summary = (f"The draft to {to}"
-                       + (f" (cc {cc})" if cc else "")
-                       + f' about "{subject}"{attach_note} is on your screen.'
-                       " Send it?")
+            # Nobody has time to HEAR an email. The draft is on the screen
+            # with Yes/No buttons; speech carries only the safety-critical
+            # part: who receives it.
+            summary = f"Draft to {to} is on your screen — send it?"
         else:
             body_preview = body if len(body) <= 200 else body[:200] + "…"
             summary = (

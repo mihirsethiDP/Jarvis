@@ -107,3 +107,17 @@ def test_two_real_colleagues_stay_ambiguous():
 def test_unknown_names_return_nothing():
     matches, confident = D.resolve(None, "Zoltan")
     assert matches == [] and not confident
+
+
+def test_a_misheard_name_offers_the_nearest_real_one():
+    # STT rounds unfamiliar names to familiar ones: "Joshi" arrives as
+    # "Jyoti", below the fuzzy floor. resolve() must not guess — but the
+    # no-match answer should offer the nearest real names so one short
+    # question recovers the request instead of dead-ending it.
+    matches, confident = D.resolve(None, "Jyoti")
+    assert matches == [] and not confident
+    assert D.closest_names(None, "Jyoti") == ["Mohit Joshi"]
+
+
+def test_closest_names_never_invents_a_suggestion():
+    assert D.closest_names(None, "Zoltan") == []

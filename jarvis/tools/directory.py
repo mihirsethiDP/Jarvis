@@ -161,6 +161,45 @@ def resolve(people_svc, spoken_name: str) -> tuple[list[dict], bool]:
     return [], False
 
 
+def closest_names(people_svc, spoken_name: str, n: int = 2) -> list[str]:
+    """The nearest directory names to a spoken one that matched nothing.
+
+    STT rounds unfamiliar names to familiar ones — "Joshi" arrives as
+    "Jyoti" — and scores just below the fuzzy floor, so resolve() correctly
+    refuses to guess. But "no directory match" is a dead end that costs the
+    user the whole request; "did you mean Mohit Joshi?" costs one word.
+    """
+    everyone = _fetch_all(people_svc)
+    if not everyone:
+        return []
+    from difflib import SequenceMatcher
+
+    spoken_keys = [k for k in name_keys(spoken_name) if len(k) >= 3]
+    if not spoken_keys:
+        return []
+
+    def score(person: dict) -> float:
+        person_keys = name_keys(display_name(person))
+        if not person_keys:
+            return 0.0
+        return min(
+            max(SequenceMatcher(None, sk, pk).ratio() for pk in person_keys)
+            for sk in spoken_keys
+        )
+
+    # Floor calibrated on real pairs: "Jyoti"/"Joshi" scores 0.67 (a genuine
+    # mis-hearing worth offering); "Zoltan"/"Jain" scores 0.60 (noise that
+    # must not become a suggestion).
+    ranked = sorted(((score(p), display_name(p)) for p in everyone), reverse=True)
+    out: list[str] = []
+    for s, name in ranked:
+        if s < 0.63 or len(out) >= n:
+            break
+        if name not in out:
+            out.append(name)
+    return out
+
+
 def prefer_colleagues(matches: list[dict], own_domain: str) -> tuple[list[dict], bool]:
     """Rank the user's own organisation above external directory contacts.
 
