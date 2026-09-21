@@ -86,6 +86,9 @@ class Transcriber:
         self._expected = [l for l in expected_languages if l] or list(_DEFAULT_EXPECTED)
         self._detector = None
         self._detector_failed = False
+        self._early: dict | None = None
+        # Per-stage seconds of the latest transcribe(), for turn timing.
+        self.last_timing: dict[str, float] = {}
 
         # Left at 0, ctranslate2 picks a conservative default; the measured
         # difference on this machine was a model load of 44s versus 7s.
@@ -199,13 +202,50 @@ class Transcriber:
                     pass
         return self.transcribe(audio_f32_16k)
 
+    def begin_early_detection(self, audio_prefix_f32_16k: np.ndarray) -> None:
+        """Start language detection on the opening seconds of an utterance
+        WHILE the user is still speaking.
+
+        Detection costs ~1.7s and used to run serially after the recording
+        ended; the first three seconds of speech decide the language just as
+        well, and the microphone loop is pure I/O, so this thread has the CPU
+        to itself and finishes long before the user does.
+        """
+        if not self._auto or self._detector_failed:
+            return
+        import threading
+
+        holder: dict = {"language": None, "done": threading.Event()}
+
+        def detect() -> None:
+            try:
+                holder["language"] = self._detect_language(audio_prefix_f32_16k)
+            finally:
+                holder["done"].set()
+
+        threading.Thread(target=detect, daemon=True,
+                         name="stt-early-detect").start()
+        self._early = holder
+
     def transcribe(self, audio_f32_16k: np.ndarray) -> str:
+        import time as _time
+
         if audio_f32_16k.size == 0:
             return ""
+        self.last_timing = {}
         language = self.language
         if self._auto:
-            language = self._detect_language(audio_f32_16k)
+            early, self._early = self._early, None
+            t0 = _time.monotonic()
+            if early is not None and early["done"].wait(timeout=4.0):
+                language = early["language"]
+                self.last_timing["detect"] = _time.monotonic() - t0  # ~0: overlapped
+            else:
+                language = self._detect_language(audio_f32_16k)
+                self.last_timing["detect"] = _time.monotonic() - t0
+        t_dec = __import__("time").monotonic()
         text, confidence = self._decode(audio_f32_16k, language)
+        self.last_timing["decode"] = __import__("time").monotonic() - t_dec
         # A mis-detected language confesses in the decode's own confidence:
         # "message bhejna hai Mansi Jain ko" forced through English comes out
         # as "same message, page, and I, man see Janko" — and scores far below
@@ -216,7 +256,9 @@ class Transcriber:
             for other in self._expected:
                 if other == language:
                     continue
+                t_retry = __import__("time").monotonic()
                 other_text, other_conf = self._decode(audio_f32_16k, other)
+                self.last_timing["retry"] = __import__("time").monotonic() - t_retry
                 if other_conf > confidence and other_text:
                     text, confidence = other_text, other_conf
                 break   # expected list is effectively a pair; one retry

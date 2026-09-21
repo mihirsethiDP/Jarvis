@@ -152,6 +152,7 @@ class JarvisApp:
             print("Note: you denied memory recall but allowed remembering — Jarvis "
                   "will store facts it never uses. Consider denying both, or "
                   f"allowing recall: {cli_hint('setup')}")
+        self._ctx = ctx
         all_tools = build_all_tools(ctx)
         self.agent = JarvisAgent(
             config, all_tools, self.audit, on_status=self._publish,
@@ -317,6 +318,11 @@ class JarvisApp:
                 expected_languages=tuple(
                     cfg.get("audio.stt.expected_languages", ["en", "hi"]) or ["en", "hi"]),
             )
+            # Language detection starts on the opening seconds of speech
+            # while the user is still talking — by the time the recording
+            # ends, the language answer is already waiting (~1.7s saved on
+            # the serial path of every utterance).
+            recorder.on_early_audio = stt.begin_early_detection
             offline_speaker = Speaker(
                 voice=cfg.get("audio.tts.voice"),
                 rate=int(cfg.get("audio.tts.rate", 180)),
@@ -435,6 +441,8 @@ class JarvisApp:
                 "Until then, Jarvis asks at first use of each capability."
             )
         self.audit.record("startup", detail="voice" if self.voice else "text")
+        threading.Thread(target=self._warm_up, daemon=True,
+                         name="assistant-warmup").start()
         try:
             if self.voice is not None:
                 self._run_voice()
@@ -506,6 +514,44 @@ class JarvisApp:
         v["mic"].drain()
         return True
 
+    def _warm_up(self) -> None:
+        """Pay every first-use cost up front, off the critical path.
+
+        Without this the FIRST request of the day carries: the tiny detector
+        model load (~2s), cold ctranslate2 kernels, two Google API discovery
+        builds (~1s each), the directory fetch (~1s), and the cloud TTS
+        round-trip for the confirmation phrasing (~1.8s). The worst turn an
+        employee experiences should not be their first one.
+        """
+        import numpy as np
+
+        try:
+            if self.voice is not None:
+                # Loads the tiny detector and warms the decode kernels.
+                self.voice["stt"].transcribe(np.zeros(8000, dtype=np.float32))
+        except Exception:
+            pass
+        try:
+            if self.voice is not None and hasattr(self.voice["speaker"], "prewarm"):
+                # The fixed sentences of the consent gates: cached now, every
+                # confirmation after this plays them instantly.
+                self.voice["speaker"].prewarm([
+                    "Say yes to proceed, or no to cancel.",
+                    "Sorry, I didn't catch that. Say yes to go ahead, or no to cancel.",
+                    "Sorry, I didn't catch that.",
+                ])
+        except Exception:
+            pass
+        try:
+            from .tools import directory as _directory
+
+            people = self._ctx.google_service("people", "v1")
+            _directory._fetch_all(people)                      # directory cache
+            self._ctx.google_service("gmail", "v1").users().getProfile(
+                userId="me").execute()                         # own domain
+        except Exception:
+            pass   # not signed in yet, or offline — first use pays as before
+
     def _run_voice(self) -> None:
         v = self.voice
         name = self.config.get("assistant.name", "Jarvis")
@@ -545,7 +591,16 @@ class JarvisApp:
                     chime.play("done")
                     self._publish("transcribing",
                                   f"heard {len(audio) / 16000:.0f}s — writing it down")
+                    import time as _time
+                    _t0 = _time.monotonic()
                     text = v["stt"].transcribe(audio)
+                    self._turn_timing = {
+                        "speech": round(getattr(v["recorder"], "last_speech_seconds", 0), 2),
+                        "tail": round(getattr(v["recorder"], "last_tail_seconds", 0), 2),
+                        "stt": round(_time.monotonic() - _t0, 2),
+                        **{k: round(x, 2)
+                           for k, x in getattr(v["stt"], "last_timing", {}).items()},
+                    }
                     if not text:
                         v["speaker"].say("Sorry, I didn't catch that.")
                         v["mic"].drain()

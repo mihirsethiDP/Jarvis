@@ -158,3 +158,13 @@ def test_button_answer_aborts_the_microphone():
     rec = UtteranceRecorder(_mic_with_speech(), detector=None)
     audio = rec.record(abort_event=event)
     assert audio.size == 0, "an already-answered question must not record"
+
+
+def test_early_audio_fires_once_while_still_speaking():
+    heard = []
+    rec = UtteranceRecorder(_mic_with_speech(seconds=6.0), detector=None,
+                            on_early_audio=lambda a: heard.append(len(a)))
+    rec.record()
+    assert len(heard) == 1, "the early hint fires exactly once per utterance"
+    # Fired at ~3s of speech: the prefix holds roughly that much audio.
+    assert 2.8 * 16000 <= heard[0] <= 4.0 * 16000

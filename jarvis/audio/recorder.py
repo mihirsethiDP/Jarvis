@@ -32,6 +32,7 @@ class UtteranceRecorder:
         start_window_seconds: float = 6.0,
         min_speech_seconds: float = 0.3,
         detector=None,
+        on_early_audio=None,
     ):
         self.mic = mic
         self.max_seconds = max_seconds
@@ -41,6 +42,14 @@ class UtteranceRecorder:
         # A voice-activity model when one is available; None falls back to the
         # RMS-energy path below, which cannot tell speech from a fan.
         self.detector = detector
+        # Fired once per utterance with the first ~3s of speech, while the
+        # user is still talking — the transcriber runs language detection on
+        # it in parallel with the rest of the recording.
+        self.on_early_audio = on_early_audio
+        # For per-turn timing: how long the endpoint tail took, and how much
+        # of the recording was actual speech.
+        self.last_tail_seconds = 0.0
+        self.last_speech_seconds = 0.0
 
     def record(self, start_window: float | None = None,
                abort_event=None) -> np.ndarray:
@@ -61,6 +70,7 @@ class UtteranceRecorder:
             # The model carries state between frames; without this the tail of
             # the last utterance bleeds into the start of this one.
             self.detector.reset()
+        early_fired = False
         blocks: list[np.ndarray] = []
         noise_rms = 150.0  # prior on int16 scale; adapts to the room below
         speech_started = False
@@ -106,6 +116,15 @@ class UtteranceRecorder:
                 speech_time += _BLOCK_SECONDS
                 silence_run = 0.0
                 tail_peak = 0.0
+                if (not early_fired and self.on_early_audio is not None
+                        and speech_time >= 3.0):
+                    early_fired = True
+                    try:
+                        prefix = (np.concatenate(blocks)
+                                  .astype(np.float32) / 32768.0)
+                        self.on_early_audio(prefix)
+                    except Exception:
+                        pass   # a hint, never a failure
             else:
                 # Exponential floor tracking, updated only when not speaking.
                 noise_rms = 0.9 * noise_rms + 0.1 * rms
@@ -152,5 +171,7 @@ class UtteranceRecorder:
 
         if not speech_started or not blocks:
             return np.empty(0, dtype=np.float32)
+        self.last_tail_seconds = silence_run
+        self.last_speech_seconds = speech_time
         audio = np.concatenate(blocks).astype(np.float32) / 32768.0
         return audio

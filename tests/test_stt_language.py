@@ -102,3 +102,51 @@ def test_a_bad_retry_does_not_replace_a_less_bad_original(transcriber):
         detect=("en", 0.6, [("en", 0.6), ("hi", 0.4)]),
     )
     assert tr.transcribe(AUDIO) == "mumbled but audible"
+
+
+def test_early_detection_overlaps_recording(monkeypatch):
+    # Detection starts on the opening seconds WHILE the user is still
+    # talking; by the time the recording ends the answer is waiting, so the
+    # serial path pays ~0 for it.
+    import numpy as np
+
+    from jarvis.audio import stt as stt_mod
+
+    tr = stt_mod.Transcriber.__new__(stt_mod.Transcriber)
+    tr.language = None
+    tr._auto = True
+    tr._expected = ["en", "hi"]
+    tr._detector_failed = False
+    tr._early = None
+    tr.last_timing = {}
+    detected = []
+
+    def fake_detect(audio):
+        detected.append(len(audio))
+        return "hi"
+
+    tr._detect_language = fake_detect
+    tr._decode = lambda audio, language: (f"decoded[{language}]", -0.2)
+
+    tr.begin_early_detection(np.zeros(48000, dtype=np.float32))
+    out = tr.transcribe(np.zeros(96000, dtype=np.float32))
+    assert out == "decoded[hi]"
+    assert detected == [48000], "detection must run once, on the early prefix"
+    assert tr.last_timing["detect"] < 0.5, "the wait should be ~0 — it overlapped"
+
+
+def test_transcribe_without_early_hint_still_detects():
+    import numpy as np
+
+    from jarvis.audio import stt as stt_mod
+
+    tr = stt_mod.Transcriber.__new__(stt_mod.Transcriber)
+    tr.language = None
+    tr._auto = True
+    tr._expected = ["en", "hi"]
+    tr._detector_failed = False
+    tr._early = None
+    tr.last_timing = {}
+    tr._detect_language = lambda audio: "en"
+    tr._decode = lambda audio, language: (f"decoded[{language}]", -0.2)
+    assert tr.transcribe(np.zeros(16000, dtype=np.float32)) == "decoded[en]"

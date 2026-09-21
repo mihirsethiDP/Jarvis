@@ -74,6 +74,15 @@ class EdgeSpeaker:
         self.last_engine = "edge"
         self._failures = 0
         self._cooloff_until = 0.0
+        # Short chunks repeat constantly — "Say yes to proceed, or no to
+        # cancel." rides on EVERY confirmation — so synthesised audio is kept
+        # in memory (never on disk: spoken replies are conversation content)
+        # and replayed instantly instead of paying the cloud round-trip again.
+        self._cache: dict[tuple[str, str], bytes] = {}
+        # Seconds from say() to the first audible sound of the latest reply —
+        # read by the per-turn timing instrumentation.
+        self.last_first_sound: float = 0.0
+        self._say_started = 0.0
 
     def _use_fallback(self, text: str, reason: str) -> None:
         if self.last_engine != "offline":
@@ -84,9 +93,29 @@ class EdgeSpeaker:
             self.on_engine("offline", reason)
         self.fallback.say(text)
 
+    def prewarm(self, phrases: list[str]) -> None:
+        """Synthesise fixed system phrases into the cache ahead of need, so
+        the first confirmation of the day doesn't pay the cloud latency."""
+        for phrase in phrases:
+            phrase = phrase.strip()
+            if not phrase:
+                continue
+            voice = self.voice_hi if _looks_hindi(phrase) else self.voice_en
+            key = (voice, phrase)
+            if key in self._cache:
+                continue
+            try:
+                self._cache[key] = asyncio.run(
+                    asyncio.wait_for(self._synthesize(phrase),
+                                     timeout=_SYNTH_TIMEOUT))
+            except Exception:
+                return   # offline or blocked network: stop trying quietly
+
     def say(self, text: str) -> None:
         if not text.strip():
             return
+        self._say_started = time.monotonic()
+        self.last_first_sound = 0.0
         # Speak sentence by sentence. Synthesising a whole three-sentence
         # reply before any sound comes out put the entire synthesis cost in
         # front of the first word; sending the first sentence alone starts
@@ -111,12 +140,26 @@ class EdgeSpeaker:
 
         # One retry before giving up the good voice: most failures here are a
         # single dropped connection, not an unreachable service.
+        voice = self.voice_hi if _looks_hindi(text) else self.voice_en
+        cached = self._cache.get((voice, text.strip()))
+        if cached is not None:
+            self._mark_first_sound()
+            self._play(cached)
+            self.last_engine = "edge"
+            return
+
         last_error = None
         for _ in range(2):
             try:
                 mp3 = asyncio.run(
                     asyncio.wait_for(self._synthesize(text), timeout=_SYNTH_TIMEOUT)
                 )
+                stripped = text.strip()
+                if len(stripped) <= 120:
+                    if len(self._cache) >= 80:   # oldest-in wins eviction
+                        self._cache.pop(next(iter(self._cache)))
+                    self._cache[(voice, stripped)] = mp3
+                self._mark_first_sound()
                 self._play(mp3)
                 self._failures = 0
                 if self.last_engine != "edge" and self.on_engine:
@@ -130,6 +173,10 @@ class EdgeSpeaker:
         if self._failures >= 2:
             self._cooloff_until = time.monotonic() + _COOLOFF_SECONDS
         self._use_fallback(text, f"{type(last_error).__name__}: {last_error}")
+
+    def _mark_first_sound(self) -> None:
+        if not self.last_first_sound and self._say_started:
+            self.last_first_sound = time.monotonic() - self._say_started
 
     async def _synthesize(self, text: str) -> bytes:
         import edge_tts
