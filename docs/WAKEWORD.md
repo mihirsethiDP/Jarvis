@@ -1,107 +1,101 @@
-# Changing the wake word
+# The wake word: "Hey Riva"
 
-**Short version: "Hey DP" cannot be switched on in config. It does not exist
-yet as a model, and one has to be trained.** Everything below is how to get
-there, and what to do in the meantime.
+**Decision (Sep 2026): DP Assistant's wake word is "Hey Riva".** Riva (Reva)
+is the classical Sanskrit name of the Narmada river — and to an English ear
+it sounds like "river". One name that works in Hindi and English, tied to
+the water business, checked against the company directory for collisions
+(none), and shaped like an assistant's name: two syllables, vowel ending.
 
-## Why it isn't a setting
+Until the custom model is trained and installed, the interim wake word is
+**"Alexa"** (`audio.wake.model: alexa`).
 
-Wake-word detection runs a small neural network on every 80 ms of audio. That
-network is trained for one specific phrase. openWakeWord ships exactly six
-pretrained ones:
+## Why it needs training
+
+Wake-word detection runs a small neural network on every 80 ms of audio,
+trained for one specific phrase. openWakeWord ships exactly six pretrained
+ones:
 
 ```
 alexa   hey_jarvis   hey_mycroft   hey_rhasspy   timer   weather
 ```
 
-There is no "Hey DP" among them, and no amount of configuration produces one —
-`audio.wake.model` selects a model, it does not define a phrase.
+`audio.wake.model` selects a model; it cannot define a phrase. "Hey Riva"
+has to be trained once — after that it is a file any DigitalPaani machine
+can use.
 
-## First: find out whether the model hears you at all
+## Training "Hey Riva" on Google Colab (~30–60 min, free GPU)
 
-Indian-accented speech scores lower against these models, because they were
-trained mostly on American and British English. Before changing anything,
-measure it:
+openWakeWord's automatic pipeline synthesises thousands of spoken variations
+of the phrase across many voices, mixes in noise and room reverb, and trains
+against large negative corpora so it learns what *isn't* the wake word. You
+never record yourself.
+
+1. Open the notebook `automatic_model_training.ipynb` from the openWakeWord
+   GitHub repository (dscripka/openWakeWord, `notebooks/` folder) in Google
+   Colab:
+   https://colab.research.google.com/github/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb
+   (If the link moves, search "openWakeWord automatic model training colab".)
+2. Runtime → Change runtime type → **GPU** (T4 is fine on the free tier).
+3. Set the target phrase to `hey riva`. Where the notebook accepts multiple
+   spellings/pronunciations, add variants so it learns how the office will
+   actually say it:
+   - `hey riva`
+   - `hey reeva`
+   - `hey ree va`
+4. Leave the defaults for sample counts and negative data unless the
+   notebook suggests otherwise; run all cells. Most of the hour is
+   unattended.
+5. Download the resulting **`hey_riva.onnx`** (the `.tflite` twin is not
+   needed — Windows runs the onnx one).
+
+## Installing it
+
+Drop the file in `Downloads` and tell the assistant's maintainer — or do it
+by hand:
+
+1. Copy `hey_riva.onnx` to `%APPDATA%\Jarvis\models\` (create the folder).
+2. In `%APPDATA%\Jarvis\config.yaml`:
+
+```yaml
+audio:
+  wake:
+    model: C:/Users/<you>/AppData/Roaming/Jarvis/models/hey_riva.onnx
+    threshold: 0.5
+```
+
+`audio.wake.model` accepts an absolute path — no code change needed. The
+desktop widget and HUD derive their label from the filename and will show
+**Say "Hey Riva"** automatically.
+
+## Tuning after install
+
+Measure before touching anything:
 
 ```
 jarvis wake-test
 ```
 
-Say "Hey Jarvis" a few times at your normal distance and volume. Each attempt
-prints its peak score against the 0.5 default:
+Say "Hey Riva" a few times at normal distance and volume; each attempt
+prints its peak score against the threshold.
 
 | Peak | What it means | What to do |
 |---|---|---|
-| above 0.5 | Detection works | The problem is elsewhere — check the mic |
-| 0.2 – 0.5 | The model hears you but scores low | Lower the threshold (below) |
-| below 0.2 | It doesn't recognise your pronunciation | Train a custom word |
+| above 0.5 | Detection works | Done — test in a noisy room too |
+| 0.2 – 0.5 | Hears you, scores low | Lower `threshold` toward 0.35 |
+| below 0.2 | Doesn't recognise the pronunciation | Retrain with more pronunciation variants |
 
-## The cheap fix: lower the threshold
-
-If your peaks land in the 0.2–0.5 band, this is a two-line change and takes
-effect immediately. In `%APPDATA%\Jarvis\config.yaml`:
-
-```yaml
-audio:
-  wake:
-    model: hey_jarvis
-    threshold: 0.35      # default is 0.5
-```
-
-The trade-off is real: a lower threshold fires more easily on background
-speech. Test it in a normal working room with people talking, not in a quiet
-one — a threshold that behaves at your desk at 9pm may trigger through an
-afternoon of conversation.
-
-## The real fix: train "Hey DP"
-
-openWakeWord has an automatic training pipeline. You never record yourself —
-it synthesises thousands of variations of the phrase across many voices and
-accents, mixes in noise and room reverb, and trains against large negative
-speech corpora so it learns what *isn't* the wake word.
-
-1. Open openWakeWord's training notebook (`automatic_model_training.ipynb`)
-   in Google Colab — it needs a GPU, which Colab gives you free.
-2. Set the target phrase. Generate several accent variants rather than one
-   spelling, so the model covers how people actually say it:
-   `hey dee pee`, `hey d p`, `hey deepee`.
-3. Run the notebook. Expect roughly an hour end to end, most of it unattended.
-4. Download the resulting `.onnx` file.
-
-Install it:
-
-```yaml
-audio:
-  wake:
-    model: C:/Users/<you>/AppData/Roaming/Jarvis/models/hey_dp.onnx
-    threshold: 0.5
-```
-
-`audio.wake.model` already accepts an absolute path, so no code change is
-needed. Re-run `jarvis wake-test` against the new model and tune the
-threshold the same way.
-
-### One caveat about "Hey DP" specifically
-
-It is a **short** phrase — three syllables, and "dee pee" is acoustically thin.
-Short wake words false-trigger more, because there is less signal to
-distinguish them from ordinary speech. Expect to spend real time on the
-threshold, and consider training a longer alternative at the same time so you
-can compare:
-
-- `hey dee pee` — shortest, most false positives
-- `hey digital paani` — noticeably more robust, clunkier to say
-- `okay dee pee` — the extra syllable up front helps more than it looks
-
-Train two and keep whichever behaves in a real room.
+Test the final threshold in a normal working room with people talking, not a
+quiet one — a threshold that behaves at 9 pm may trigger through an
+afternoon of conversation. Note: barge-in (interrupting the assistant
+mid-speech) runs at `threshold + 0.2`, so a threshold of 0.5 means barge-in
+needs a clear 0.7 — that headroom is deliberate.
 
 ## The paid alternative
 
 Picovoice Porcupine generates a custom wake word from typed text in about a
-minute, with better accent robustness than openWakeWord out of the box. The
-catch is licensing: the free tier is for personal and evaluation use, so
-deploying it across DigitalPaani machines needs a commercial plan. If the
-training route proves painful, this is the fallback worth pricing — but it is
-a procurement decision, not a technical one.
-
-openWakeWord is Apache-2.0 with no per-seat cost, which is why Jarvis uses it.
+minute, with strong accent robustness out of the box. The catch is
+licensing: the free tier is for personal and evaluation use, so deploying it
+across DigitalPaani machines needs a commercial plan. If the training route
+proves painful, this is the fallback worth pricing — a procurement decision,
+not a technical one. openWakeWord is Apache-2.0 with no per-seat cost, which
+is why DP Assistant uses it.
