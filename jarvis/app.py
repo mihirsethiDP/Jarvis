@@ -214,7 +214,16 @@ class JarvisApp:
             self.permissions.begin_turn()
             tools_pkg.begin_turn()
             try:
-                reply = self.agent.run_turn(text)
+                # Typed requests take the same fast lane and model routing as
+                # spoken ones; confirmations land on the page either way.
+                reply = self._try_fastpath(text)
+                if reply is None:
+                    from .brain import fastpath as _fastpath
+
+                    fast_model = str(self.config.get("brain.fast_model", "") or "")
+                    model = (fast_model if fast_model
+                             and _fastpath.wants_fast_model(text) else None)
+                    reply = self.agent.run_turn(text, model=model)
             except Exception as e:
                 self.audit.record("error", tool="ui_turn", detail=str(e), ok=False)
                 reply = "Something went wrong handling that — please try again."
@@ -575,6 +584,18 @@ class JarvisApp:
                 return fastpath.answer_date(intent["hindi"])
             if intent["kind"] == "chat_send":
                 return self._fastpath_chat_send(intent)
+            from .tools import quick
+
+            if intent["kind"] == "unread_count":
+                self._narrate("Checking your inbox")
+                return quick.unread_count(self._ctx, intent["hindi"])
+            if intent["kind"] == "latest_email":
+                self._narrate("Reading your latest email")
+                return quick.latest_email(self._ctx, intent["hindi"])
+            if intent["kind"] == "calendar_peek":
+                self._narrate("Checking your calendar")
+                return quick.events_for_day(self._ctx, intent["day_offset"],
+                                            intent["hindi"])
         except Exception:
             self.audit.record("turn", tool="fastpath",
                               detail=f"error on {intent['kind']} — fell through",

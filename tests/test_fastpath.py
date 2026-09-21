@@ -167,3 +167,44 @@ def test_decline_with_correction_goes_to_the_model():
             "Treat that as a correction."),
     })
     assert app._try_fastpath("message bhejo Deeksha ko ki late aaunga") is None
+
+
+# -- the quick read-only intents --------------------------------------------
+@pytest.mark.parametrize("text,kind", [
+    ("how many unread emails do I have", "unread_count"),
+    ("kitne unread emails hain", "unread_count"),
+    ("कितने नए ईमेल आए हैं", "unread_count"),
+    ("read my latest email", "latest_email"),
+    ("latest email sunao", "latest_email"),
+    ("नई ईमेल पढ़ो", "latest_email"),
+    ("what's on my calendar today", "calendar_peek"),
+    ("aaj ki meetings kya hain", "calendar_peek"),
+    ("कल की मीटिंग बताओ", "calendar_peek"),
+])
+def test_quick_lookup_shapes_match(text, kind):
+    intent = fastpath.match(text)
+    assert intent is not None and intent["kind"] == kind, text
+
+
+def test_calendar_day_offset():
+    assert fastpath.match("what's on my calendar today")["day_offset"] == 0
+    assert fastpath.match("kal ki meetings kya hain")["day_offset"] == 1
+    assert fastpath.match("कल की मीटिंग बताओ")["day_offset"] == 1
+
+
+@pytest.mark.parametrize("text", [
+    # Chained or qualified asks must reach the model, not a template.
+    "check my unread emails and reply to the urgent one",
+    "read my latest email from Ranjana",
+    "what's on my calendar next Friday",
+    "kitne unread emails hain client se",
+])
+def test_qualified_lookups_fall_through(text):
+    assert fastpath.match(text) is None, text
+
+
+def test_bata_do_is_a_chat_send():
+    intent = fastpath.match("Deeksha ko bata do ki main kal late aaunga")
+    assert intent["kind"] == "chat_send"
+    assert intent["person"] == "Deeksha"
+    assert intent["body"] == "main kal late aaunga"
