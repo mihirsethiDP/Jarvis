@@ -10,6 +10,10 @@ assistant:
 
 brain:
   model: claude-opus-4-8
+  # Read-only lookup questions ("kitne unread emails") route to this faster,
+  # cheaper model; composing/chaining requests stay on the main model above.
+  # Set to "" to disable routing and use the main model for everything.
+  fast_model: claude-haiku-4-5-20251001
   # low | medium | high. Thinking is adaptive, so simple questions stay fast
   # regardless — this mainly sets the ceiling for how hard Jarvis may work on
   # a request that spans several systems. Drop to "low" if voice replies feel

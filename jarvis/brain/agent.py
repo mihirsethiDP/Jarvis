@@ -68,8 +68,14 @@ class JarvisAgent:
         return build_system_prompt(self.name, block, self.denied_capabilities)
 
     # ------------------------------------------------------------------
-    def run_turn(self, user_text: str) -> str:
-        """Run one conversational turn and return the text to speak."""
+    def run_turn(self, user_text: str, model: str | None = None) -> str:
+        """Run one conversational turn and return the text to speak.
+
+        *model* overrides the configured model for THIS turn only — the app
+        routes read-only lookup questions to a faster, cheaper model while
+        anything that composes or chains stays on the main one.
+        """
+        self._model_override = model
         # Hard spend brake — checked in code before any API call is made.
         if self.turn_budget is not None and not self.turn_budget.allow():
             self.audit.record("turn", tool="brain", detail="daily limit reached",
@@ -130,7 +136,7 @@ class JarvisAgent:
     # ------------------------------------------------------------------
     def _run_tool_loop(self) -> str:
         runner = self.client.beta.messages.tool_runner(
-            model=self.config.model,
+            model=getattr(self, "_model_override", None) or self.config.model,
             max_tokens=self.config.max_tokens,
             system=self._system_prompt(),
             thinking={"type": "adaptive"},

@@ -154,6 +154,9 @@ class JarvisApp:
                   f"allowing recall: {cli_hint('setup')}")
         self._ctx = ctx
         all_tools = build_all_tools(ctx)
+        # For the intent fast-path: direct access to the same gated tools the
+        # model uses. Never a new capability — just a shorter route to them.
+        self._tool_map = {t.name: t for t in all_tools}
         self.agent = JarvisAgent(
             config, all_tools, self.audit, on_status=self._publish,
             on_narrate=self._narrate,
@@ -551,6 +554,67 @@ class JarvisApp:
                 userId="me").execute()                         # own domain
         except Exception:
             pass   # not signed in yet, or offline — first use pays as before
+
+    def _try_fastpath(self, text: str) -> str | None:
+        """Execute a fully-recognized command without the LLM, or None.
+
+        None means "not my job" — the caller hands the text to the model
+        exactly as before. Every side effect still runs through the same
+        permission/confirmation-gated tools; this only removes the model
+        round trip, never a check.
+        """
+        from .brain import fastpath
+
+        intent = fastpath.match(text)
+        if intent is None:
+            return None
+        try:
+            if intent["kind"] == "time":
+                return fastpath.answer_time(intent["hindi"])
+            if intent["kind"] == "date":
+                return fastpath.answer_date(intent["hindi"])
+            if intent["kind"] == "chat_send":
+                return self._fastpath_chat_send(intent)
+        except Exception:
+            self.audit.record("turn", tool="fastpath",
+                              detail=f"error on {intent['kind']} — fell through",
+                              ok=False)
+            return None
+        return None
+
+    def _fastpath_chat_send(self, intent: dict) -> str | None:
+        import re as _re
+
+        find = self._tool_map.get("find_direct_message")
+        send = self._tool_map.get("send_chat_message")
+        if find is None or send is None:
+            return None    # capability denied at setup: the model explains
+        self._narrate(f"Finding {intent['person']}'s chat")
+        found = find(intent["person"])
+        space = _re.search(r"space id (spaces/\S+?)\.", found + ".")
+        if space is None:
+            # Ambiguous, unknown, or no DM — the model handles the follow-up
+            # conversation better than a template can.
+            self.audit.record("turn", tool="fastpath",
+                              detail=f"chat_send: unresolved '{intent['person']}'")
+            return None
+        sent = send(space.group(1), intent["body"])
+        recipient = _re.search(r"Message sent to (.+?):", sent)
+        if recipient is not None:
+            who = recipient.group(1)
+            self.audit.record("turn", tool="fastpath",
+                              detail=f"chat_send -> {who}")
+            return (f"{who} को भेज दिया।" if intent["hindi"]
+                    else f"Sent to {who}.")
+        if "Refused by the safety limiter" in sent:
+            return ("Send limit reached for now — that one has to go "
+                    "manually, or wait a bit.")
+        if sent.startswith("Cancelled") and "They said:" not in sent:
+            return "ठीक है, नहीं भेजा।" if intent["hindi"] else "Okay — not sent."
+        # Declined WITH a correction, or an API error: the model's job.
+        self.audit.record("turn", tool="fastpath",
+                          detail="chat_send: handed to the model")
+        return None
 
     def _run_voice(self) -> None:
         v = self.voice
