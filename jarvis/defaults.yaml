@@ -62,6 +62,11 @@ audio:
   # After Jarvis replies, keep listening this many seconds for a follow-up
   # ("no wait, I misspoke") with no wake word needed. 0 disables.
   follow_up_seconds: 8
+  # Barge-in: saying the wake phrase WHILE the assistant is speaking stops
+  # it mid-sentence and hands you the floor (the follow-up window then
+  # listens with no wake word). Wake-word gated at a raised threshold, so
+  # the assistant's own voice cannot interrupt itself.
+  barge_in: true
   tts:
     # pyttsx3: offline Windows SAPI voices (private, robotic).
     # edge: Microsoft neural voices incl. Hindi/Hinglish — natural, but CLOUD:

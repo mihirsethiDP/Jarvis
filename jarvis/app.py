@@ -64,6 +64,9 @@ class JarvisApp:
         self._ui_answer: str | None = None
         self._ui_answer_event = threading.Event()
         self._voice_ask_pending = False
+        # True while TTS is playing a reply: the Talk button then means
+        # "stop talking", and the barge-in listener is armed.
+        self._speaking = False
         self._web_io = None
         self.overlay = None
 
@@ -239,10 +242,65 @@ class JarvisApp:
 
     def _listen_from_ui(self) -> bool:
         """Push-to-talk: record one utterance with no wake word."""
-        if self.voice is None or self._ui_busy():
+        if self.voice is None:
+            return False
+        if self._ui_busy():
+            # Talk pressed while the assistant is speaking: that IS the
+            # request — stop talking and listen. The follow-up window right
+            # after the reply picks the microphone up with no wake word.
+            if self._speaking and hasattr(self.voice["speaker"], "stop"):
+                self.voice["speaker"].stop()
+                return True
             return False
         self._push_to_talk.set()
         return True
+
+    def _speak_interruptible(self, v: dict, reply: str) -> None:
+        """Speak the reply, listening for the wake phrase the whole time.
+
+        Saying "Alexa" over the assistant stops it mid-sentence and hands the
+        floor back — the follow-up window right after catches what the user
+        says next, no wake word needed. The listener is wake-word gated (not
+        open VAD, which would hear the assistant's own voice and interrupt
+        itself) and runs at a RAISED threshold, because the microphone is
+        full of our own speech while it listens.
+        """
+        speaker, wake = v["speaker"], v.get("wake")
+        wake_phrase = str(self.config.get("audio.wake.model", "hey_jarvis"))
+        can_barge = (
+            bool(self.config.get("audio.barge_in", True))
+            and wake is not None
+            and hasattr(speaker, "stop")
+            # Self-trigger guard: never arm the listener while speaking the
+            # wake word itself.
+            and wake_phrase.split("_")[-1].lower() not in reply.lower()
+        )
+        if not can_barge:
+            self._speaking = True
+            try:
+                speaker.say(reply)
+            finally:
+                self._speaking = False
+            return
+
+        done = threading.Event()
+        barge_threshold = min(0.9, float(wake.threshold) + 0.2)
+
+        def listen_for_interrupt() -> None:
+            if wake.wait(should_stop=done.is_set, threshold=barge_threshold):
+                speaker.stop()
+                self._publish("listening", "stopped — go ahead")
+
+        listener = threading.Thread(target=listen_for_interrupt, daemon=True,
+                                    name="barge-in")
+        self._speaking = True
+        listener.start()
+        try:
+            speaker.say(reply)
+        finally:
+            self._speaking = False
+            done.set()
+            listener.join(1.5)
 
     def _answer_from_ui(self, answer: str) -> None:
         if self._voice_ask_pending:
@@ -522,7 +580,7 @@ class JarvisApp:
         if server is not None:
             server.publish_message("jarvis", reply)
         print(f"Jarvis: {reply}")
-        v["speaker"].say(reply)
+        self._speak_interruptible(v, reply)
         v["mic"].drain()
         return True
 

@@ -79,6 +79,9 @@ class EdgeSpeaker:
         # in memory (never on disk: spoken replies are conversation content)
         # and replayed instantly instead of paying the cloud round-trip again.
         self._cache: dict[tuple[str, str], bytes] = {}
+        # Barge-in: stop() flips this and halts the current playback; say()
+        # checks it between sentence chunks and abandons the rest.
+        self._interrupted = False
         # Seconds from say() to the first audible sound of the latest reply —
         # read by the per-turn timing instrumentation.
         self.last_first_sound: float = 0.0
@@ -111,9 +114,21 @@ class EdgeSpeaker:
             except Exception:
                 return   # offline or blocked network: stop trying quietly
 
+    def stop(self) -> None:
+        """Interrupt the current utterance (barge-in). Safe from any thread:
+        halts the playing chunk immediately and say() skips the rest."""
+        self._interrupted = True
+        try:
+            import sounddevice as sd
+
+            sd.stop()
+        except Exception:
+            pass
+
     def say(self, text: str) -> None:
         if not text.strip():
             return
+        self._interrupted = False
         self._say_started = time.monotonic()
         self.last_first_sound = 0.0
         # Speak sentence by sentence. Synthesising a whole three-sentence
@@ -124,6 +139,8 @@ class EdgeSpeaker:
         chunks = _split_sentences(text)
         if len(chunks) > 1:
             for chunk in chunks:
+                if self._interrupted:
+                    return   # the user barged in; they have the floor now
                 self._say_one(chunk)
             return
         self._say_one(text)

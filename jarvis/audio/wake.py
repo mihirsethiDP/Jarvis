@@ -42,16 +42,27 @@ class WakeWordDetector:
             openwakeword.utils.download_models()
             return Model(wakeword_models=[model_name], inference_framework="onnx")
 
-    def wait(self, should_stop=None) -> bool:
+    def wait(self, should_stop=None, threshold: float | None = None) -> bool:
         """Block until the wake phrase is heard.
 
         Returns True when the phrase fired, False if *should_stop* went true
         first — the Quit button has to be able to end a session that is
         sitting idle waiting for a wake word, which is most of the time.
+
+        *threshold* overrides the configured one for this wait only. The
+        barge-in listener (running WHILE the assistant speaks, hearing its
+        own voice through the microphone) passes a raised value so only a
+        clear wake phrase interrupts playback.
         """
+        effective = self.threshold if threshold is None else threshold
         buffer = np.empty(0, dtype=np.int16)
         while True:
             if should_stop is not None and should_stop():
+                if threshold is not None:
+                    # A barge listener fed the model the assistant's own
+                    # speech; clear that state so the next idle wait starts
+                    # from silence instead of a half-primed buffer.
+                    self.model.reset()
                 return False
             block = self.mic.read(timeout=1.0)
             if block is None:
@@ -60,7 +71,7 @@ class WakeWordDetector:
             while len(buffer) >= _FRAME_SAMPLES:
                 frame, buffer = buffer[:_FRAME_SAMPLES], buffer[_FRAME_SAMPLES:]
                 scores = self.model.predict(frame)
-                if max(scores.values()) >= self.threshold:
+                if max(scores.values()) >= effective:
                     self.model.reset()
                     self.mic.drain()
                     time.sleep(0.05)
