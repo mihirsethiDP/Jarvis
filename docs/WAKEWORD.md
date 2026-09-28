@@ -6,8 +6,17 @@ it sounds like "river". One name that works in Hindi and English, tied to
 the water business, checked against the company directory for collisions
 (none), and shaped like an assistant's name: two syllables, vowel ending.
 
-Until the custom model is trained and installed, the interim wake word is
-**"Alexa"** (`audio.wake.model: alexa`).
+**Status: trained and installed (28 Sep 2026).** The model lives at
+`%APPDATA%\Jarvis\models\hey_riva.onnx`. Test scores on synthesized speech:
+0.83-0.95 for "hey riva" in Indian-English voices (threshold 0.5), 0.00 for
+unrelated phrases, "the river…", other names and "Alexa". Weak spots: Hindi-voice
+pronunciations (0.02-0.32) and saying it run-together with the request; a
+brief pause after "Hey Riva" (the chime) works reliably. Training metrics:
+0.35 false triggers/hour, recall 0.45 on the deliberately hard synthetic set.
+If real-voice scores from `jarvis wake-test` are low, retrain with real
+recordings from the team added to the positive clips. Rollback: set
+`audio.wake.model: alexa` (the pre-switch config is saved as
+`config.yaml.bak-alexa`).
 
 ## Why it needs training
 

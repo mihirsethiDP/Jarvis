@@ -265,15 +265,21 @@ class JarvisApp:
         itself) and runs at a RAISED threshold, because the microphone is
         full of our own speech while it listens.
         """
+        from .audio.wakewords import spoken_phrase
+
         speaker, wake = v["speaker"], v.get("wake")
-        wake_phrase = str(self.config.get("audio.wake.model", "hey_jarvis"))
+        # The spoken phrase, not the config value: a custom model is configured
+        # as a file path, and the last "_" part of ".../hey_riva.onnx" is
+        # "riva.onnx", which never appears in a reply.
+        wake_word = spoken_phrase(
+            str(self.config.get("audio.wake.model", "hey_jarvis"))).split()[-1].lower()
         can_barge = (
             bool(self.config.get("audio.barge_in", True))
             and wake is not None
             and hasattr(speaker, "stop")
             # Self-trigger guard: never arm the listener while speaking the
             # wake word itself.
-            and wake_phrase.split("_")[-1].lower() not in reply.lower()
+            and wake_word not in reply.lower()
         )
         if not can_barge:
             self._speaking = True

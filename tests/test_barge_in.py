@@ -173,3 +173,41 @@ def test_reply_containing_the_wake_word_never_arms_the_listener():
         app, {"speaker": _Speaker(), "wake": _Wake()},
         "Alexa is the wake word you chose.")
     assert armed == [], "speaking the wake word must not trigger the assistant itself"
+
+
+def test_custom_model_path_still_guards_against_self_trigger():
+    # A custom wake word is configured as a file path; the guard must use the
+    # spoken word ("riva"), not the file name ("riva.onnx").
+    from jarvis.app import JarvisApp
+
+    armed = []
+
+    class _Wake:
+        threshold = 0.5
+
+        def wait(self, **kw):
+            armed.append(True)
+            return False
+
+    class _Speaker:
+        def say(self, text):
+            pass
+
+        def stop(self):
+            pass
+
+    class _Config:
+        @staticmethod
+        def get(key, default=None):
+            if key == "audio.wake.model":
+                return "C:/Users/x/AppData/Roaming/Jarvis/models/hey_riva.onnx"
+            return default
+
+    app = JarvisApp.__new__(JarvisApp)
+    app.config = _Config()
+    app._publish = lambda *a, **k: None
+    app._speaking = False
+    JarvisApp._speak_interruptible(
+        app, {"speaker": _Speaker(), "wake": _Wake()},
+        "Say Hey Riva whenever you need me.")
+    assert armed == [], "a reply containing 'Riva' must not arm barge-in"
