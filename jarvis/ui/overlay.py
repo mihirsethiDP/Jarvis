@@ -41,7 +41,7 @@ _STATE_STYLE = {
 }
 
 _WIDTH = 340
-_BAR_HEIGHT = 68           # collapsed
+_BAR_HEIGHT = 64           # collapsed: a slimmer pill
 _PANEL_HEIGHT = 190        # extra height when expanded
 _MARGIN = 24
 _COLLAPSE_AFTER_MS = 12_000   # auto-fold this long after the content settles
@@ -52,6 +52,91 @@ _INK = "#e8e6e1"
 _INK_DIM = "#8b8f98"
 _EMBER = "#ff6b1a"
 _EMBER_HI = "#ffb066"
+
+
+def _enable_dpi_awareness() -> None:
+    """Render at the screen's real resolution.
+
+    Without this, Windows draws the widget at 96 DPI and stretches the bitmap
+    on a 125-150% scaled laptop screen, which is why text and edges looked
+    soft. Must run before the first window in the process exists; harmless if
+    it was already set or the API is missing (older Windows, other OSes).
+    """
+    try:
+        import ctypes
+
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor aware
+    except Exception:
+        try:
+            import ctypes
+
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+def _clip_to_rounded_rect(root, width: int, height: int, radius: int) -> None:
+    """Cut the window itself to a rounded shape (Windows only).
+
+    A Tk window is always a rectangle; drawing a pill inside it would leave
+    dark corners showing. SetWindowRgn makes the area outside the shape
+    genuinely not part of the window, so the desktop shows through and clicks
+    there go to whatever is underneath.
+    """
+    try:
+        import ctypes
+
+        user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+        region = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1,
+                                          radius * 2, radius * 2)
+        # The system owns the region after a successful call; don't free it.
+        if not user32.SetWindowRgn(hwnd, region, True):
+            gdi32.DeleteObject(region)
+    except Exception:
+        pass      # not Windows: the widget stays a plain rectangle
+
+
+def _rounded_rect(canvas, x1, y1, x2, y2, r, **kw):
+    """A rounded rectangle on a Tk canvas (smoothed polygon). r >= half the
+    height gives a pill."""
+    r = max(0, min(r, (x2 - x1) // 2, (y2 - y1) // 2))
+    points = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+              x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+              x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return canvas.create_polygon(points, smooth=True, **kw)
+
+
+class _Chip:
+    """A small pill-shaped button drawn on its own canvas."""
+
+    def __init__(self, parent, text, px, *, fill, fg, command, bold=False):
+        import tkinter as tk
+        import tkinter.font as tkfont
+
+        font = tkfont.Font(family="Segoe UI", size=9,
+                           weight="bold" if bold else "normal")
+        h = px(24)
+        w = font.measure(text) + px(26)
+        bg = parent.cget("bg")
+        self.widget = tk.Canvas(parent, width=w, height=h, bg=bg,
+                                highlightthickness=0, bd=0, cursor="hand2")
+        # A true pill: two end circles and a bar between them. (The smoothed
+        # polygon only rounds this small a shape partway.)
+        c = self.widget
+        c.create_oval(0, 0, h - 1, h - 1, fill=fill, outline="")
+        c.create_oval(w - h, 0, w - 1, h - 1, fill=fill, outline="")
+        c.create_rectangle(h // 2, 0, w - h // 2, h - 1, fill=fill, outline="")
+        self.widget.create_text(w // 2, h // 2, text=text, fill=fg, font=font)
+        self.widget.bind("<Button-1>", lambda _e: command())
+
+    def pack(self, **kw):
+        self.widget.pack(**kw)
+        return self
+
+    def place(self, **kw):
+        self.widget.place(**kw)
+        return self
 
 
 class Overlay:
@@ -143,6 +228,8 @@ class Overlay:
     def _build(self) -> None:
         import tkinter as tk
 
+        _enable_dpi_awareness()     # before the first window: crisp, not upscaled
+
         self._expanded = False
         self._pinned = False          # user opened it by hand: stay open
         self._prompt_text = ""
@@ -153,99 +240,137 @@ class Overlay:
         self._root.overrideredirect(True)          # no title bar
         self._root.attributes("-topmost", True)
         self._root.configure(bg=_BG)
-        try:
-            self._root.attributes("-alpha", 0.94)
-        except Exception:
-            pass
+        # Fully opaque: any transparency lets bright windows behind it bleed
+        # through the text.
+
+        # All layout below is in "design pixels" at 96 DPI, scaled to the real
+        # screen. Fonts are given in points, which Tk already scales.
+        self._s = max(1.0, self._root.winfo_fpixels("1i") / 96.0)
+        self._w = self._px(_WIDTH)
+        self._bar_h = self._px(_BAR_HEIGHT)
+        self._panel_h = self._px(_PANEL_HEIGHT)
 
         screen_w = self._root.winfo_screenwidth()
         screen_h = self._root.winfo_screenheight()
         # Anchored by its BOTTOM edge so expansion grows upward and the bar
         # never walks into the taskbar.
-        self._anchor_x = screen_w - _WIDTH - _MARGIN
-        self._anchor_bottom = screen_h - _MARGIN - 48
-        self._apply_geometry()
+        self._anchor_x = screen_w - self._w - self._px(_MARGIN)
+        self._anchor_bottom = screen_h - self._px(_MARGIN + 48)
 
-        frame = tk.Frame(self._root, bg=_BG, highlightthickness=1,
-                         highlightbackground=_EDGE)
-        frame.pack(fill="both", expand=True)
+        # One canvas is the whole widget: the pill shape, its ember hairline,
+        # the status dot and the Talk chip are drawn on it; the text labels
+        # sit on top in the flat interior, away from the curved ends.
+        self._canvas = tk.Canvas(self._root, bg=_BG, highlightthickness=0, bd=0)
+        self._canvas.place(x=0, y=0, relwidth=1, relheight=1)
 
-        # --- the expandable content panel (packed/forgotten as a whole) ---
-        self._panel = tk.Frame(frame, bg=_BG)
-
+        # --- the expandable content panel (placed only while expanded) ---
+        self._panel = tk.Frame(self._canvas, bg=_BG)
         self._content = tk.Label(
             self._panel, text="", bg=_BG, fg=_INK, font=("Segoe UI", 9),
-            anchor="nw", justify="left", wraplength=_WIDTH - 40)
-        self._content.pack(fill="both", expand=True, padx=14, pady=(12, 6))
-
+            anchor="nw", justify="left", wraplength=self._w - self._px(56))
+        self._content.pack(side="top", fill="x", padx=self._px(6),
+                           pady=(self._px(4), self._px(10)))
         self._buttons = tk.Frame(self._panel, bg=_BG)
-        yes = tk.Label(self._buttons, text="  Yes  ", bg=_EMBER, fg="#1a0d02",
-                       font=("Segoe UI", 10, "bold"), pady=4, cursor="hand2")
-        no = tk.Label(self._buttons, text="  No  ", bg="#22252c", fg=_INK_DIM,
-                      font=("Segoe UI", 10), pady=4, cursor="hand2")
-        yes.pack(side="left", padx=(14, 8))
-        no.pack(side="left")
-        yes.bind("<Button-1>", lambda _e: self._answer("yes"))
-        no.bind("<Button-1>", lambda _e: self._answer("no"))
+        _Chip(self._buttons, "Yes", self._px, fill=_EMBER, fg="#1a0d02",
+              bold=True, command=lambda: self._answer("yes")).pack(
+                  side="left", padx=(self._px(6), self._px(8)))
+        _Chip(self._buttons, "No", self._px, fill="#262a31", fg=_INK_DIM,
+              command=lambda: self._answer("no")).pack(side="left")
         # (self._buttons is packed only while a question is pending)
 
-        # --- the always-visible bar (packed last: bottom of the window) ---
-        bar = tk.Frame(frame, bg=_BG, height=_BAR_HEIGHT - 2)
-        bar.pack(side="bottom", fill="x")
-        bar.pack_propagate(False)
-
-        self._dot = tk.Canvas(bar, width=14, height=14, bg=_BG,
-                              highlightthickness=0)
-        self._dot.place(x=12, y=12)
-        self._dot_id = self._dot.create_oval(2, 2, 12, 12, fill=_EMBER, outline="")
-
-        self._label = tk.Label(bar, text="Starting…", bg=_BG, fg=_INK,
+        # --- the always-visible bar, anchored to the widget's bottom edge ---
+        inset = self._px(22)                  # clear of the round left end
+        self._label = tk.Label(self._canvas, text="Starting…", bg=_BG, fg=_INK,
                                font=("Segoe UI", 10, "bold"), anchor="w")
-        self._label.place(x=34, y=9, width=178)
-
-        self._detail = tk.Label(bar, text="", bg=_BG, fg=_INK_DIM,
+        self._label.place(x=inset + self._px(26), rely=1.0,
+                          y=-self._bar_h + self._px(11), width=self._px(170))
+        self._detail = tk.Label(self._canvas, text="", bg=_BG, fg=_INK_DIM,
                                 font=("Segoe UI", 8), anchor="w", justify="left")
-        self._detail.place(x=34, y=30, width=_WIDTH - 46)
+        self._detail.place(x=inset + self._px(26), rely=1.0,
+                           y=-self._bar_h + self._px(33),
+                           width=self._w - inset * 2 - self._px(26))
 
-        talk = tk.Label(bar, text="Talk", bg="#22150b", fg=_EMBER_HI,
-                        font=("Segoe UI", 8), padx=8, pady=3, cursor="hand2")
-        talk.place(x=_WIDTH - 92, y=9)
-        talk.bind("<Button-1>", lambda _e: self._talk())
-
-        # Open the full HUD — a deliberate small target, since the body
-        # click now belongs to expanding the widget itself.
-        hud = tk.Label(bar, text="⤢", bg=_BG, fg=_INK_DIM,
-                       font=("Segoe UI", 10), cursor="hand2")
-        hud.place(x=_WIDTH - 44, y=8)
-        hud.bind("<Button-1>", lambda _e: self._open_hud())
-
-        self._chevron = tk.Label(bar, text="▴", bg=_BG, fg=_INK_DIM,
+        right = self._w - self._px(26)        # clear of the round right end
+        self._chevron = tk.Label(self._canvas, text="▴", bg=_BG, fg=_INK_DIM,
                                  font=("Segoe UI", 10), cursor="hand2")
-        self._chevron.place(x=_WIDTH - 24, y=8)
+        self._chevron.place(x=right - self._px(12), rely=1.0,
+                            y=-self._bar_h + self._px(9))
         self._chevron.bind("<Button-1>", lambda _e: self._toggle(manual=True))
+        # Open the full HUD — a deliberate small target, since the body
+        # click belongs to expanding the widget itself.
+        hud = tk.Label(self._canvas, text="⤢", bg=_BG, fg=_INK_DIM,
+                       font=("Segoe UI", 10), cursor="hand2")
+        hud.place(x=right - self._px(34), rely=1.0, y=-self._bar_h + self._px(9))
+        hud.bind("<Button-1>", lambda _e: self._open_hud())
+        self._talk_chip = _Chip(self._canvas, "Talk", self._px, fill="#2a1a0d",
+                                fg=_EMBER_HI, command=self._talk)
+        self._talk_chip.place(x=right - self._px(92), rely=1.0,
+                              y=-self._bar_h + self._px(10))
 
+        self._dot_colour = _EMBER
         # Click the body to expand/collapse; drag to move.
-        for widget in (bar, self._label, self._detail, self._content):
+        for widget in (self._canvas, self._label, self._detail, self._content):
             widget.bind("<Button-1>", self._press)
             widget.bind("<B1-Motion>", self._drag)
             widget.bind("<ButtonRelease-1>", self._release)
 
+        self._apply_geometry()
         self._root.after(80, self._pump)
 
+    def _px(self, design_pixels: float) -> int:
+        return int(round(design_pixels * getattr(self, "_s", 1.0)))
+
     # -- geometry ----------------------------------------------------------
+    def _fit_panel(self) -> None:
+        """Size the expanded card to its content instead of a fixed height:
+        a one-line question should not open a mostly empty card."""
+        self._panel.update_idletasks()
+        needed = self._content.winfo_reqheight() + self._px(28)
+        if self._buttons.winfo_manager():
+            needed += self._buttons.winfo_reqheight() + self._px(4)
+        self._panel_h = max(self._px(72), min(needed, self._px(_PANEL_HEIGHT)))
+
     def _apply_geometry(self) -> None:
-        height = _BAR_HEIGHT + (_PANEL_HEIGHT if self._expanded else 0)
+        if self._expanded:
+            self._fit_panel()
+        height = self._bar_h + (self._panel_h if self._expanded else 0)
         y = self._anchor_bottom - height
-        self._root.geometry(f"{_WIDTH}x{height}+{self._anchor_x}+{y}")
+        self._root.geometry(f"{self._w}x{height}+{self._anchor_x}+{y}")
+        self._root.update_idletasks()
+        # A true pill when collapsed (radius = half the height); a softer
+        # rounded card when expanded, where a full half-height radius would
+        # eat the text area.
+        radius = self._bar_h // 2 if not self._expanded else self._px(26)
+        self._redraw(height, radius)
+        _clip_to_rounded_rect(self._root, self._w, height, radius)
+
+    def _redraw(self, height: int, radius: int) -> None:
+        c = self._canvas
+        c.delete("shape")
+        _rounded_rect(c, 1, 1, self._w - 2, height - 2, radius, tags="shape",
+                      fill=_BG, outline=_EDGE, width=max(1, self._px(1)))
+        # Status dot: a soft halo ring around a solid core, on the bar row.
+        cx = self._px(30)
+        cy = height - self._bar_h + self._px(21)      # level with the title line
+        r, halo = self._px(5), self._px(9)
+        self._halo_id = c.create_oval(cx - halo, cy - halo, cx + halo, cy + halo,
+                                      outline=self._dot_colour,
+                                      width=max(1, self._px(1)), tags="shape")
+        self._dot_id = c.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                     fill=self._dot_colour, outline="", tags="shape")
+        c.tag_lower("shape")
+        if self._expanded:
+            pad = self._px(22)
+            self._panel.place(x=pad, y=self._px(16), width=self._w - 2 * pad,
+                              height=self._panel_h - self._px(12))
+        else:
+            self._panel.place_forget()
 
     def _set_expanded(self, expanded: bool) -> None:
         if expanded == self._expanded:
             return
         self._expanded = expanded
-        if expanded:
-            self._panel.pack(side="top", fill="both", expand=True)
-        else:
-            self._panel.pack_forget()
+        if not expanded:
             self._pinned = False
         self._chevron.config(text="▾" if expanded else "▴")
         self._apply_geometry()
@@ -315,6 +440,8 @@ class Overlay:
         self._prompt_text = ""
         self._buttons.pack_forget()
         self._content.config(text="")
+        if self._expanded:
+            self._apply_geometry()
         self._schedule_collapse()
         if self._on_answer:
             try:
@@ -345,6 +472,12 @@ class Overlay:
         if getattr(self, "_loading", False):
             self._phase = (self._phase + 1) % 4
             self._label.config(text=self._base_label + "." * self._phase)
+            # The halo breathes while it works, so "busy" reads at a glance.
+            self._canvas.itemconfig(
+                self._halo_id,
+                outline=self._dot_colour if self._phase < 2 else _EDGE)
+        elif hasattr(self, "_halo_id"):
+            self._canvas.itemconfig(self._halo_id, outline=self._dot_colour)
         self._root.after(220, self._pump)
 
     def _apply(self, state: str, detail: str) -> None:
@@ -353,7 +486,9 @@ class Overlay:
         self._base_label = label.rstrip("…")
         self._loading = loading
         self._label.config(text=label, fg="#d3dcef")
-        self._dot.itemconfig(self._dot_id, fill=colour)
+        self._dot_colour = colour
+        self._canvas.itemconfig(self._dot_id, fill=colour)
+        self._canvas.itemconfig(self._halo_id, outline=colour)
         text = " ".join((detail or "").split())
         if len(text) > 78:
             text = text[:77] + "…"
@@ -364,15 +499,20 @@ class Overlay:
         self._prompt_text = prompt
         if prompt:
             self._content.config(text=prompt, fg=_EMBER_HI)
-            self._buttons.pack(side="bottom", anchor="w", pady=(0, 12))
+            self._buttons.pack(side="top", anchor="w")
             self._cancel_collapse()
-            self._set_expanded(True)
+            if self._expanded:
+                self._apply_geometry()     # resize to fit the new content
+            else:
+                self._set_expanded(True)
         else:
             self._buttons.pack_forget()
             if self._content_text:
                 self._content.config(text=self._content_text, fg=_INK)
             else:
                 self._content.config(text="")
+            if self._expanded:
+                self._apply_geometry()
             self._schedule_collapse()
 
     def _apply_message(self, text: str) -> None:
@@ -383,5 +523,8 @@ class Overlay:
         if not self._prompt_text:      # a pending question keeps priority
             self._content.config(text=text, fg=_INK)
             if text:
-                self._set_expanded(True)
+                if self._expanded:
+                    self._apply_geometry()
+                else:
+                    self._set_expanded(True)
                 self._schedule_collapse()
